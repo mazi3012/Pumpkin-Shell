@@ -1,0 +1,354 @@
+# Pumpkin-Shell: implementation phases
+
+Ordered roadmap for building v1.0. Work one phase at a time, in number order. A phase is done only when every line in its **Done when** list passes.
+
+- Scope and requirements: [PRD.md](PRD.md). PRD task numbers (§12) are shown as `T1`–`T16`.
+- Decisions and open questions (`Q1`–`Q6`): [DECISIONS.md](DECISIONS.md).
+- Dev machine baseline and conventions: [PLAN.md](PLAN.md).
+
+## Overview
+
+| Phase | Name | PRD | Platform | Milestone | Status |
+|---|---|---|---|---|---|
+| 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3, 1.4 optional, not applied) |
+| 2 | Workspace skeleton and CI | T1 | Both | | todo |
+| 3 | `doctor` (Linux) | T1 | Linux | | todo |
+| 4 | `scan` | T4 | Both | **v0.1** | todo |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
+| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
+| 7 | Policy and signed log | T5 | Both | | todo |
+| 8 | Linux `ide` backend | T6 | Linux | | todo |
+| 9 | Egress proxy | T7 | Both | | todo |
+| 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
+| 11 | Notifications and review | T9 | Linux | | todo |
+| 12 | Brokers | T10 | Linux | | todo |
+| 13 | Code-OSS adapter, four IDEs | T11 | Linux | **Linux v0.5** | todo |
+| 14 | npm and PyPI mirror | T12 | Both | | todo |
+| 15 | Linux exec/connect auditing | T13 | Linux | | todo |
+| 16 | Windows enforcement | T14 | Windows | | todo |
+| 17 | Windows parity | T15 | Windows | | todo |
+| 18 | v1.0 release | T16 | Both | **v1.0** | todo |
+
+Phase 6 is out of number order on purpose. The PRD runs both proofs of concept early so the design can change before anything depends on it. If no Windows machine is available, skip Phase 6 and continue with Phase 7. It must be done before Phase 16.
+
+Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this table when a phase changes state.
+
+---
+
+## Phase 1: Dev environment
+
+**Goal:** a machine that can build, lint and audit Rust code.
+
+1.1. Install Rust with rustup (stable toolchain plus `clippy` and `rustfmt`). Use rustup, not apt: apt ships Rust 1.75, which is too old for current crates.
+1.2. `cargo install --locked cargo-deny cargo-audit`.
+1.3. Optional: install the `gh` CLI for CI and releases.
+1.4. Optional, recommended: `sudo chmod -R go-w /usr/share/kiro` (67 world-writable files found, see PLAN.md).
+1.5. Make the first git commit of the existing docs and steering, so later phases have a clean diff baseline.
+
+**Done when:**
+- `cargo --version`, `cargo clippy --version`, `cargo deny --version`, `cargo audit --version` all succeed.
+- `git log` shows at least one commit.
+
+**Needs from you:** approval to install the tools in 1.1 and 1.2. 1.4 needs sudo.
+
+---
+
+## Phase 2: Workspace skeleton and CI
+
+**Goal:** an empty but buildable workspace with CI on Linux and Windows.
+
+2.1. Root `Cargo.toml` workspace, `rust-toolchain.toml` (pinned stable), `deny.toml`, and a committed `Cargo.lock`.
+2.2. Crates: `pks-cli` (binary `pumpkin-shell`, clap derive), `pks-core`, `pks-scan`, `pks-sandbox`. Create only these four. Later crates are added in the phase that needs them (see `structure.md`).
+2.3. `pks-core`: `Severity` (INFO, NOTICE, WARN, HIGH, CRITICAL), `RuleId`, `Action`, `Finding` (rule, severity, target, message, fix hint). Rules are data, so `scan`, the watcher and the proxy share one type.
+2.4. `pks-sandbox`: `SandboxBackend` trait with empty `linux` and `windows` modules behind `#[cfg(target_os)]`.
+2.5. `pumpkin-shell --version` and `--help` work.
+2.6. GitHub Actions workflow on `ubuntu-latest` and `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, `cargo audit`.
+2.7. Add `target/` to `.gitignore`.
+
+**Done when:**
+- All CI jobs pass locally on Linux.
+- CI is green on both runners. This needs the GitHub repo `mazi3012/pumpkin-shell` to exist and be pushed to.
+
+**Blocked by:** Q1 (final binary name) only if you want a different name than `pumpkin-shell`. Q6 (license) for crate metadata; `license` can stay unset until decided.
+
+---
+
+## Phase 3: `doctor` (Linux)
+
+**Goal:** `pumpkin-shell doctor` tells the user whether this machine can run the sandbox, and how to fix it if not.
+
+3.1. Check framework: each check returns pass / warn / fail plus a one-line fix.
+3.2. Kernel version (≥ 5.13 required, ≥ 6.7 recommended).
+3.3. `bwrap` present and ≥ 0.8.
+3.4. Unprivileged user namespaces allowed. Read `kernel.apparmor_restrict_unprivileged_userns` where it exists, and prove it by trying to create a user namespace.
+3.5. Landlock ABI version (probe with the `landlock` crate, not a `/proc` file).
+3.6. seccomp user notification support (probe the syscall; there is no `/proc` flag for it).
+3.7. Display type: Wayland, X11, or none. X11 prints the risk warning (Q4).
+3.8. IDE install permissions: report world-writable or non-root-owned files under the Kiro install (rule `SYS-IDE-TAMPERABLE`).
+3.9. Human output and `--json` output.
+
+**Done when:**
+- On this machine `doctor` passes the kernel, bwrap, userns and Landlock checks, warns about X11, and reports `SYS-IDE-TAMPERABLE` for `/usr/share/kiro` (unless 1.4 was applied).
+- Unit tests cover version parsing and each check's pass/fail mapping.
+
+---
+
+## Phase 4: `scan` → v0.1
+
+**Goal:** a static scanner that finds agent-escape setups in a repo and works in CI. Pure Rust, no sandbox needed.
+
+4.1. Workspace walker: respects `.gitignore`, never follows symlinks out of the repo, compares paths by component (CVE-2025-54794).
+4.2. `WS-HIDDEN-UNICODE`: tag chars U+E0000–U+E007F, bidi controls, zero-width characters. Report file, line and code point.
+4.3. `WS-AUTOAPPROVE`: `chat.tools.autoApprove` in `.vscode/settings.json` (and Cursor/Windsurf equivalents); MCP `autoApprove` in `.kiro/settings/mcp.json`, `.mcp.json`, `.cursor/mcp.json`.
+4.4. MCP server inventory: list every configured MCP server and its command.
+4.5. Kiro command hooks in `.kiro/hooks/` (any hook with a `command` action).
+4.6. `.vscode/tasks.json` tasks with `runOptions.runOn: "folderOpen"`.
+4.7. `.yarnrc.yml` `yarnPath`.
+4.8. `.git/config` `core.fsmonitor` and `core.hooksPath`; executable files in `.git/hooks`.
+4.9. NTFS alternate data streams (Windows build only).
+4.10. Output: human text and `--json`. `--ci` exits 0 when clean, 1 when findings at or above a threshold, 2 on error.
+4.11. One fixture repo per rule under `tests/fixtures/scan/`, plus one clean repo.
+4.12. Tag release **v0.1** with binaries for Linux and Windows.
+
+**Done when:**
+- Every fixture produces exactly its expected finding; the clean repo produces none.
+- `pumpkin-shell scan --ci` fails a GitHub Actions run on a fixture with hidden Unicode in `.kiro/steering` (PRD scenario 11).
+
+**Note:** JSON config files such as `settings.json` allow comments (JSONC). Parse them with a JSONC-tolerant parser.
+
+---
+
+## Phase 5: Linux PoC: Kiro in bwrap
+
+**Goal:** prove Kiro runs inside bubblewrap before building the real backend. Shell script first, Rust later.
+
+5.1. Script `scripts/poc/linux-kiro.sh`: bwrap with a test HOME, `--unshare-all`, `--die-with-parent`, `--new-session`, read-only root, read-write repo, fresh `/proc`.
+5.2. Make the GUI work: X11 (direct with opt-in warning, or Xpra/Xephyr per Q4), GPU (`/dev/dri`), `/dev/shm`, fonts.
+5.3. Keep Chromium's own sandbox working through nested user namespaces. Never pass `--no-sandbox`.
+5.4. No network, or a stub proxy only.
+5.5. Record every breakage and the minimum permission that fixed it in `docs/poc/linux-kiro.md`.
+
+**Done when:**
+- Kiro opens the repo and edits a file.
+- `cat ~/.ssh/*` from Kiro's terminal fails.
+- No network except the stub.
+
+**Blocked by:** Q4 (X11 approach). This machine has no Wayland.
+
+---
+
+## Phase 6: Windows PoC: Kiro as `pks-sandbox`
+
+**Goal:** prove the Windows design (separate user, WFP, Job Object) before building on it.
+
+6.1. Create local non-admin user `pks-sandbox` manually.
+6.2. Run Kiro as that user inside a Job Object with kill-on-close.
+6.3. WFP filters by the user's SID: only loopback to a stub proxy port allowed.
+6.4. Test escapes: processes started through WMI `Win32_Process.Create` and `schtasks` must stay network-blocked, and cleanup must remove them.
+6.5. Record findings in `docs/poc/windows-kiro.md`.
+
+**Done when:**
+- Kiro runs; `C:\Users\<you>\.ssh` is denied; a direct `curl` fails.
+
+**Blocked by:** Q5 (Windows machine or VM), Q2 (admin install acceptable).
+
+---
+
+## Phase 7: Policy and signed log
+
+**Goal:** the trusted host-side policy and tamper-evident log every later layer writes to.
+
+7.1. Policy schema in TOML: user policy at `~/.config/pumpkin-shell/policy.toml` (`%APPDATA%\Pumpkin-Shell\` on Windows).
+7.2. Repo `pumpkin-shell.toml` merge that can only tighten; loosening attempts raise `POL-UNTRUSTED` and are ignored.
+7.3. `pumpkin-shell trust` pins the repo policy hash.
+7.4. Signed log, JSONL fields: `v`, `session`, `seq`, `ts`, `prev`, `policy_hash`, `layer`, `target`, `rule`, `verdict`, `sig` (ed25519 via `ed25519-dalek`, hashes via `sha2`).
+7.5. Key stored outside any sandbox-visible path. Signed checkpoint at session end.
+7.6. `pumpkin-shell log verify`: checks chain, signatures and checkpoint.
+
+**Done when:**
+- Tests show `log verify` fails after editing, deleting, reordering or truncating any line.
+- A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`.
+
+---
+
+## Phase 8: Linux `ide` backend
+
+**Goal:** `pumpkin-shell ide kiro .` launches Kiro in the sandbox from Rust, using what Phase 5 learned.
+
+8.1. Implement `SandboxBackend` for Linux: build the bwrap argument vector (never a shell string).
+8.2. Read-only root including the IDE install, read-write repo, persistent per-IDE home.
+8.3. Filtered environment. Not passed in: `SSH_AUTH_SOCK`, D-Bus session bus, `docker.sock`, `/run/user/$UID`.
+8.4. Landlock as a second layer; seccomp filter blocking `TIOCSTI`.
+8.5. No network yet (Phase 9 adds the proxy).
+
+**Done when:**
+- `pumpkin-shell ide kiro .` opens Kiro on this repo.
+- `~/.ssh`, `SSH_AUTH_SOCK` and the D-Bus session bus are unreachable from Kiro's terminal.
+
+---
+
+## Phase 9: Egress proxy
+
+**Goal:** the only network path out of the sandbox. Adds crate `pks-proxy`.
+
+9.1. Host proxy on a Unix socket, with a relay inside the sandbox on loopback.
+9.2. HTTP CONNECT allowlist of exact `host:port`. Reject wildcards over shared cloud domains (`*.amazonaws.com`, `*.googleapis.com`, `*.blob.core.windows.net`).
+9.3. Proxy resolves DNS itself; refuses private, link-local and metadata addresses (`NET-PRIVATE-IP`).
+9.4. Unknown domains: hold 20 s and ask allow / always / deny (`NET-UNKNOWN-DOMAIN`); deny when headless.
+9.5. Optional `host_ports` relays, logged as NOTICE.
+9.6. Per-host upload byte counters (`NET-LARGE-UPLOAD` above 10 MB to a non-model-API host).
+9.7. Kiro profile with its exact domains, confirmed in monitor mode.
+
+**Done when:**
+- Kiro chat works through the proxy.
+- An unknown domain triggers the ask prompt.
+- A request to `169.254.169.254` or a LAN address is blocked.
+
+---
+
+## Phase 10: Workspace integrity (Linux)
+
+**Goal:** protected files are staged, not written; the user can always recover.
+
+10.1. Protected paths bind-mounted from a staging copy; new protected paths caught by a host inotify watcher and quarantined (`WS-PROTECTED-WRITE`).
+10.2. `WS-AUTOAPPROVE` on staged config changes: CRITICAL, staged, pause.
+10.3. Watched paths diffed and shown in review (`WS-WATCHED-CHANGE`).
+10.4. Snapshot before launch: working tree including untracked non-ignored files, via a temporary index, bundled to the data dir. `pumpkin-shell restore <sid>`.
+10.5. `WS-MASS-DELETE` (> 50 files or > 20% of tracked files) with a restore hint.
+10.6. Decoy `id_ed25519`, AWS credentials and `gh` `hosts.yml` with unique markers (`FS-DECOY-READ`).
+10.7. `WS-SECRET-WRITTEN` for secrets written into the repo.
+
+**Done when:** PRD scenarios 3, 4 and 8 pass.
+
+---
+
+## Phase 11: Notifications and review
+
+**Goal:** the user sees what happened and can approve, resume or kill. Adds crate `pks-detect`.
+
+11.1. Severity engine routing: INFO/NOTICE → log and summary; WARN → `watch`; HIGH → `notify-send`; CRITICAL → webhook plus configured action.
+11.2. Deduplication by rule + target; at most one desktop notification per 10 s.
+11.3. `pumpkin-shell watch`.
+11.4. Webhook output (Slack, Discord, plain JSON).
+11.5. Pause with SIGSTOP; `resume` and `kill`.
+11.6. `pumpkin-shell review`: blocks, staged writes to approve/reject, watched-file diff, quarantined files, restore command.
+11.7. `allow` and `allow-write` commands. Every block message names the policy line that would allow it.
+
+**Done when:**
+- Reading a decoy file shows a desktop alert.
+- A CRITICAL finding pauses Kiro until `resume`.
+
+---
+
+## Phase 12: Brokers
+
+**Goal:** the host-side actions the sandbox may request but not perform.
+
+12.1. URL-open broker: the sandbox's `xdg-open` forwards to the host browser.
+12.2. OAuth callback relay back to the sandboxed IDE on loopback.
+12.3. `git push` approval: prompt shows remote and branch.
+
+**Done when:** PRD scenarios 2 (Kiro sign-in) and 12 (`git push` prompt) pass.
+
+---
+
+## Phase 13: Code-OSS adapter and four IDEs → Linux v0.5
+
+**Goal:** one adapter that covers Kiro, VS Code, Cursor and Windsurf. Adds crate `pks-ide` and `profiles/`.
+
+13.1. Code-OSS adapter: shared layout of settings, extensions and user data.
+13.2. Profiles in `profiles/*.toml`: paths, exact domains, env keys per IDE.
+13.3. `pumpkin-shell ide import <ide>`: settings and extensions, never tokens.
+13.4. `ide code`, `ide cursor`, `ide windsurf`.
+13.5. Tag release **Linux v0.5**.
+
+**Done when:** all four IDEs run under Pumpkin-Shell. Cursor and Windsurf must be installed first (not on this machine yet).
+
+---
+
+## Phase 14: npm and PyPI mirror
+
+**Goal:** safe package installs without breaking them. Adds crate `pks-registry`.
+
+14.1. Local mirror over plain HTTP inside the sandbox; rustls upstream. Direct registry connections blocked (`REG-DIRECT-BYPASS`).
+14.2. 72-hour version cooldown: hide newer versions from npm packuments and the PyPI simple index (`REG-COOLDOWN`). Lockfile pinned to a too-new version is blocked with an explanation (`REG-TOO-NEW`).
+14.3. Packages whose first release is under 30 days old are blocked; a 404 logs `REG-HALLUCINATED`.
+14.4. OSV.dev `MAL-` lookups with a cache (`REG-MALWARE`). If OSV is unreachable, allow only packages ≥ 30 days old.
+14.5. Typosquat check on normalized names (PEP 503, npm scopes): distance 1 for names ≥ 5 chars, 2 for ≥ 10 (`REG-TYPOSQUAT`).
+14.6. Verify tarballs and wheels against `dist.integrity` / sha256 (`REG-INTEGRITY`).
+14.7. `npm_config_ignore_scripts=true` by default; list packages with `hasInstallScript` in the session summary.
+14.8. Clients: npm, pnpm, yarn, bun, pip, uv, poetry.
+
+**Done when:**
+- PRD scenario 5 passes (2-hour-old version with postinstall is skipped, previous version installs, no script runs).
+- False-positive benchmark on the top 1,000 packages is recorded.
+
+---
+
+## Phase 15: Linux exec/connect auditing
+
+**Goal:** see every process and connection the sandbox makes.
+
+15.1. Host-side seccomp user-notification supervisor for `execve` and `connect`.
+15.2. Rules `EXEC-AGENT-YOLO`, `EXEC-DESTRUCTIVE`, `EXEC-RECON`, `NET-DIRECT-CONNECT` (with fix hint).
+15.3. Fail closed: if the supervisor dies, kill the session and raise `SBX-MONITOR-LOST`.
+
+**Done when:** PRD scenarios 7 and 9 pass, and killing the supervisor kills the session.
+
+---
+
+## Phase 16: Windows enforcement
+
+**Goal:** `pumpkin-shell ide kiro .` on Windows, using what Phase 6 learned.
+
+16.1. Signed `Pumpkin-Shell Service` (LocalSystem) and MSI installer that creates `pks-sandbox`.
+16.2. Repo ACL grant at session start, revoke at end, ownership reset, `safe.directory` in the sandbox user's gitconfig.
+16.3. Deny-write ACEs on protected paths; changes via `allow-write` or review.
+16.4. WFP filters by SID; everything except the proxy port blocked, including DNS.
+16.5. Job Object with kill-on-close; at session end kill all `pks-sandbox` processes and remove scheduled tasks, Run keys and startup items (`WIN-PERSIST`).
+16.6. Windows part of `doctor`: service, sandbox user, WFP.
+
+**Done when:** `pumpkin-shell ide kiro .` works on Windows and PRD scenario 10 passes.
+
+**Blocked by:** Phase 6, Q2, Q5.
+
+---
+
+## Phase 17: Windows parity
+
+**Goal:** every Linux feature also works on Windows.
+
+17.1. Proxy settings for the sandbox user (system proxy and `HTTP(S)_PROXY`).
+17.2. Named-pipe brokers restricted to the service and sandbox user.
+17.3. Toast notifications.
+17.4. ETW process auditing and WFP audit events.
+17.5. `ReadDirectoryChangesW` watcher.
+17.6. Pause by suspending the job's processes.
+
+**Done when:** all 12 PRD acceptance scenarios pass on Windows.
+
+---
+
+## Phase 18: v1.0 release
+
+**Goal:** a signed, installable product with honest public claims.
+
+18.1. Signed deb and rpm (cosign + SLSA provenance); signed MSI and service (Authenticode).
+18.2. AppArmor profile and guidance for Ubuntu 24.04+.
+18.3. Public threat model and known-risks page (PRD §11).
+18.4. Published escape corpus with "N/N pass on corpus vX" results.
+18.5. `cargo vet` added to CI.
+
+**Done when:**
+- Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04 and Windows 11.
+- 100% of the escape corpus passes on both OSes.
+
+---
+
+## Rules for working through phases
+
+- Start a phase only when the previous phase (in number order) is `done`, except Phase 6 as noted above.
+- Before a phase starts, check its **Blocked by** line and resolve or ask about each open question.
+- Every phase ends with tests and a runnable demo (`tech.md`).
+- When a phase finishes: set its status to `done`, record decisions in `DECISIONS.md`, and save an LTM checkpoint: `python3 ltm/bin/ltm.py checkpoint --summary "Phase N done: <name>"`.
+- If scope changes, edit the PRD first, then this file.
