@@ -66,6 +66,11 @@ inclusion: always
 7. Review feedback goes into new commits on the same branch. Never force-push a branch that is under review unless the user asks.
 8. After the user merges: update `main`, set the phase to `done` in `PHASES.md` (in the next phase's branch), save an LTM checkpoint, then start the next phase.
 
+## Phase status (user rule)
+- When a phase's Done-when checks pass, update its row in `docs/PHASES.md` in the same commit.
+- Mark `done` only with a green signal: local checks passing, and CI green for phases that need CI. Otherwise use `in-review (PR #n)` or `in-progress`.
+- Check earlier phases against their Done-when list too, and fix any status that is out of date.
+
 ## Git
 
 - Small commits, one logical change each, inside the phase branch. Run the checks in `tech.md` before committing Rust code.
