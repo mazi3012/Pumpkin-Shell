@@ -26,6 +26,24 @@
 - Secrets never go into logs, receipts, or error messages.
 - Dependencies: justify each new crate; prefer well-maintained ones; `cargo-deny` and `cargo-audit` must pass. Commit `Cargo.lock`.
 
+## No hallucination or fabrication (user rule, critical)
+
+- **Never invent code, documentation, or facts.** If I don't know something, I ask you or search for it. I do not guess, estimate or "fill in blanks" with made-up answers.
+- **Every claim must be sourced.** Before writing code that depends on a library's behavior, API signature, version requirement, or best practice, I verify it by one of these methods (in order):
+  1. Read the official documentation (crates.io, docs.rs, release notes, GitHub README).
+  2. Check the live codebase (read the source file).
+  3. Run a test or demo on this machine.
+  4. Search the internet (with a note on what was found and where).
+- **If I can't verify:** I say so explicitly. I don't write code that assumes the behavior is correct. I either ask you or search for the answer.
+- **Examples of hallucination I will never do:**
+  - Writing `use some_crate::function` without checking if that function exists.
+  - Claiming a crate is maintained without looking at its last commit date.
+  - Using a syntax or feature without confirming it's available in the Rust version we're targeting.
+  - Adding a dependency without checking crates.io for its latest stable version and license.
+  - Claiming a test passed when I haven't run it.
+  - Suggesting a fix without understanding the root cause.
+- **If you catch me hallucinating:** point it out, and I'll find the source and fix it immediately. Hallucination is a blocker for this project.
+
 ## No dead code (user rule)
 - Never leave dead code: no unused functions, types, modules, crates, dependencies, feature flags, commented-out code, or placeholder stubs "for later".
 - Add code only in the phase that uses it. Don't scaffold empty crates, traits or modules ahead of time; create them in the phase whose code calls them.
