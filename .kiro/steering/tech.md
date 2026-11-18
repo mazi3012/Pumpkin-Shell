@@ -9,13 +9,16 @@
 - Windows sandbox: `windows` crate (windows-rs): separate local user, WFP, Job Objects, ETW, signed service.
 - Platform code lives behind the `SandboxBackend` trait with `#[cfg(target_os = ...)]` modules. Shared logic must stay platform-neutral.
 
-## Versions: always latest stable, verified online
-- Before installing or adding any toolchain, crate, tool, GitHub Action or other dependency, search the internet for its **latest stable** release (official release notes, crates.io, docs.rs, GitHub releases). Never rely on remembered version numbers; they go stale.
+## Versions: always latest stable, verified online (user rule, critical)
+- **Before installing or adding any toolchain, crate, tool, GitHub Action or other dependency:**
+  1. Search the internet for its **latest stable** release (official release notes, crates.io, docs.rs, GitHub releases, vendor security advisories).
+  2. Verify it is secure: check for known CVEs (cve.mitre.org, nvd.nist.gov), recent security issues on GitHub, maintenance status (last commit date), and license compatibility.
+  3. Never rely on remembered version numbers; they go stale. Never use older versions without explicit justification.
 - Use stable releases only: no beta, nightly, `-rc`, `-alpha` or yanked versions.
 - Pin what you chose: Rust in `rust-toolchain.toml` (exact version, e.g. `1.100.0`), crates in `Cargo.toml` (exact minor) and `Cargo.lock` (committed), Actions by version tag or SHA.
-- Record toolchain changes in `docs/DECISIONS.md` with the date and the source you checked.
-- Current toolchain: **Rust 1.100.0** (stable, released 2026-11-12, per https://doc.rust-lang.org/releases.html, checked 2026-11-19).
-- Install Rust with rustup, never with apt (apt ships 1.75).
+- Record every install decision in `docs/DECISIONS.md` with the date, the source checked, and security findings.
+- Current toolchain: **Rust 1.100.0** (stable, released 2026-11-12, per https://doc.rust-lang.org/releases.html, checked 2026-11-19, no CVEs).
+- Install Rust with rustup, never with apt (apt ships 1.75, too old).
 
 ## Code rules
 - `cargo fmt` and `cargo clippy --all-targets -- -D warnings` must pass.
@@ -64,6 +67,27 @@
 - **Git hooks:** use pre-commit checks to catch secrets before they reach the repo. Tools: `ggshield` (GitGuardian), `git-secrets`, `gitleaks`.
 - **If a secret leaks:** immediately rotate it (revoke the token/key), then use `git filter-branch` or `git reset` to remove it from history. Report the incident.
 - **Decoys in sandbox:** synthetic credentials in the sandboxed home are intentional (rule `FS-DECOY-READ`); they stay in the codebase as test fixtures, not real secrets.
+
+## Secure package installation (user rule, critical)
+- **Every dependency must be vetted before install.** Before adding a crate to `Cargo.toml`, a tool to CI, or a GitHub Action:
+  1. **Search for the latest stable release:** official source (crates.io for Rust, docs.rs for documentation, GitHub releases for tools).
+  2. **Verify security:**
+     - Check CVE databases: [cve.mitre.org](https://cve.mitre.org), [nvd.nist.gov](https://nvd.nist.gov), `cargo audit` for known vulnerabilities.
+     - Review recent GitHub security advisories and closed issues mentioning "security" or "vulnerability".
+     - Verify maintenance: last commit date must be within the last 6 months (exception: stable, widely-used libraries like `serde`, `tokio` that update infrequently).
+     - License check: compatible with Apache-2.0 or MIT (Pumpkin-Shell standard).
+  3. **Justify the dependency** in the commit message or `docs/DECISIONS.md` if it's new. State why it's needed and what security checks were performed.
+  4. **Never use older versions** without explicit justification. If a newer version exists and is secure, use it.
+  5. **Record the decision:** `docs/DECISIONS.md` entry with date, version, source checked, and security summary (e.g., "no CVEs, actively maintained, 22 deps resolved").
+- **Automated checks:**
+  - `cargo deny check` must pass: validates licenses, checks for known-bad crates and source restrictions.
+  - `cargo audit` must pass: detects advisory vulnerabilities.
+- **CI/GitHub Actions:** pin by commit SHA or release tag, never `latest`. Verify the action is from the official organization (e.g. `actions/checkout@3d3c42e5` is official; forks require review).
+- **Supply chain red flags:** if a package is:
+  - Newly published (<30 days old) and doesn't come from a known maintainer → HIGH suspicion (typosquat, malware test).
+  - Abandoned (no commits >12 months, open security issues) → switch to an alternative.
+  - Has high download volume but low GitHub stars → potential malware farming.
+  - → Investigate further or skip it.
 
 ## Testing
 - Each task ends with tests plus a runnable demo.
