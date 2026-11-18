@@ -69,27 +69,32 @@
 - **Decoys in sandbox:** synthetic credentials in the sandboxed home are intentional (rule `FS-DECOY-READ`); they stay in the codebase as test fixtures, not real secrets.
 
 ## Secure package installation (user rule, critical)
-- Vet every dep: latest stable, CVEs (nvd.nist.gov/cargo audit), maintenance (<6 mo), license (MIT/Apache-2.0).
-- Justify new deps in commit or `docs/DECISIONS.md`.
-- CI/GitHub Actions: pin by SHA or tag. Skip: new (<30d), abandoned (>12 mo), red flags.
-
-## No hallucination or fabrication (user rule, critical)
-- Every claim must be sourced (docs, live code, tests, verified search). No guessing.
-- If unsure, ask or search; never write code assuming correctness.
-- Hallucination = blocker.
-
-## No dead code (user rule)
-- No unused code, deps, features, comments, stubs "for later".
-- Create code only in the phase that uses it.
-- `TODO` allowed only with phase number (e.g., `// TODO(phase 9): ...`).
-- Removing code: ask once, then remove all in one change.
+- **Every dependency must be vetted before install.** Before adding a crate to `Cargo.toml`, a tool to CI, or a GitHub Action:
+  1. **Search for the latest stable release:** official source (crates.io for Rust, docs.rs for documentation, GitHub releases for tools).
+  2. **Verify security:**
+     - Check CVE databases: [cve.mitre.org](https://cve.mitre.org), [nvd.nist.gov](https://nvd.nist.gov), `cargo audit` for known vulnerabilities.
+     - Review recent GitHub security advisories and closed issues mentioning "security" or "vulnerability".
+     - Verify maintenance: last commit date must be within the last 6 months (exception: stable, widely-used libraries like `serde`, `tokio` that update infrequently).
+     - License check: compatible with Apache-2.0 or MIT (Pumpkin-Shell standard).
+  3. **Justify the dependency** in the commit message or `docs/DECISIONS.md` if it's new. State why it's needed and what security checks were performed.
+  4. **Never use older versions** without explicit justification. If a newer version exists and is secure, use it.
+  5. **Record the decision:** `docs/DECISIONS.md` entry with date, version, source checked, and security summary (e.g., "no CVEs, actively maintained, 22 deps resolved").
+- **Automated checks:**
+  - `cargo deny check` must pass: validates licenses, checks for known-bad crates and source restrictions.
+  - `cargo audit` must pass: detects advisory vulnerabilities.
+- **CI/GitHub Actions:** pin by commit SHA or release tag, never `latest`. Verify the action is from the official organization (e.g. `actions/checkout@3d3c42e5` is official; forks require review).
+- **Supply chain red flags:** if a package is:
+  - Newly published (<30 days old) and doesn't come from a known maintainer → HIGH suspicion (typosquat, malware test).
+  - Abandoned (no commits >12 months, open security issues) → switch to an alternative.
+  - Has high download volume but low GitHub stars → potential malware farming.
+  - → Investigate further or skip it.
 
 ## Testing
-- Each task ends with tests + runnable demo.
-- Detection rules need one fixture per rule under `tests/fixtures/`.
-- Escape tests form the published corpus.
-- Run: `cargo test`.
+- Each task ends with tests plus a runnable demo.
+- Detection rules get one fixture per rule under `tests/fixtures/`.
+- Escape tests (FS-, NET-, IPC-, PROC-, ENV-, REG-, WIN-) form the published corpus; a rule is not "done" until its escape test exists.
+- Run tests with `cargo test` (no watch mode).
 
 ## Dev machine notes
-- Linux Mint 22.3, kernel 7.0, X11, bwrap 0.9.0, Kiro at `/usr/share/kiro`.
-- Rust via rustup in `~/.cargo`. If `cargo` missing: `. "$HOME/.cargo/env"`.
+- Linux Mint 22.3, kernel 7.0, X11 session (no Wayland), bwrap 0.9.0, Kiro at `/usr/share/kiro`.
+- Rust is installed with rustup in `~/.cargo`. If `cargo` is not found in a new shell, run `. "$HOME/.cargo/env"`.
