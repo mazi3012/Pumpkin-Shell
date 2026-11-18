@@ -65,10 +65,10 @@ Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <
 
 **Done when:**
 - [x] All CI jobs pass locally on Linux (fmt, clippy, test, cargo-deny, cargo-audit; checked 2026-11-19).
-- [ ] CI is green on both runners. Needs the branch pushed to GitHub. Open question: the local `origin` is `mazi3012/pumkinshell` but the PRD names `mazi3012/pumpkin-shell`; both exist.
-- [ ] PR opened and reviewed (`in-review (PR #n)`).
+- [x] CI is green on both runners: `check (ubuntu-latest)` and `check (windows-latest)` passed on PR #1 (merged into `mazi3012/pumpkin-shell` main at e6c5c25).
+- [x] PR opened and merged: PR #1, `mazi3012/pumpkin-shell`.
 
-Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] workflow written, not yet run on GitHub, 2.5 [x].
+Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] CI runs on both runners, 2.5 [x].
 
 **Blocked by:** Q1 (final binary name) only if you want a different name than `pumpkin-shell`. Q6 (license) for crate metadata; `license` can stay unset until decided.
 
