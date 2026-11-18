@@ -21,6 +21,7 @@ Record every product or architecture decision here with a date. Never delete ent
 | 2026-11-19 | Always use the latest stable version of tools and dependencies, verified online before installing; pin exact versions | User decision |
 | 2026-11-19 | Workflow: one phase at a time on branch `phase-<N>-<name>`, fully tested, one PR per phase. The agent never merges or pushes to `main`; merge only with the user's explicit permission for that specific PR | User decision |
 | 2026-11-19 | **Never hallucinate or fabricate.** Every claim about code, libraries, documentation or behavior must be sourced: official docs, live source code, tests on this machine, or verified search. If unsure, ask or search; never guess. Hallucination is a blocker | User decision, critical |
+| 2026-11-19 | **Never commit sensitive data.** No real credentials, API keys, tokens, cloud keys, passwords, .env files with real values, or personal information. Check every PR for accidental secrets before pushing. Workspace must stay 100% secure and clean | User decision, critical |
 
 ## Assumed defaults (not yet confirmed by user)
 

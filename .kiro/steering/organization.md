@@ -56,7 +56,8 @@ inclusion: always
    - every item in the phase's **Done when** list, checked by actually running it;
    - every numbered step of the phase has tests that cover it;
    - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, `cargo audit`;
-   - CI is green on every runner, once CI exists.
+   - CI is green on every runner, once CI exists;
+   - **No sensitive data in any file or commit history:** no real credentials, API keys, tokens, .env files with real values, private keys, or personal information. Check `git log --oneline` and `git diff main` for any accidental secrets before pushing.
    If anything fails, fix it before opening the PR. If something truly can't be tested on this machine (e.g. Windows-only code), say so in the PR description; don't claim it passed.
 4. **One PR per phase.** Push the branch and open exactly one PR. PR description: phase number and name, what changed, the Done-when checklist with the result of each item, the test and check output, and anything not verified.
 5. **Stop and wait.** After opening the PR, tell the user it's ready for review and stop. Don't start the next phase and don't open another PR.

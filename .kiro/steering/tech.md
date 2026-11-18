@@ -52,6 +52,19 @@
 - **Removing code:** when code becomes unused (a feature was abandoned, or the user asks to remove something), ask the user **once** to confirm, listing exactly what will be removed. After the user confirms, remove all of it in one change, including tests, fixtures, docs and steering references. Don't ask again for the same removal.
 - Before every PR: `cargo clippy --all-targets -- -D warnings` (which fails on unused code), and a manual check that each new dependency is used.
 
+## No sensitive data (user rule, critical)
+- **Never commit secrets:** no private keys, API tokens, credentials, cloud keys, passwords, .env files with real values, or personal information to any branch or PR.
+- **Workspace cleanup:** before every commit and PR, verify no secrets exist in:
+  - `.env` files (use `.env.example` with placeholder values only)
+  - `config/` or settings files with real credentials
+  - Git history (never commit then delete; use `git rm --cached` if accidentally staged)
+  - Documentation examples (use fake/example values with comments)
+  - Code comments or error messages
+  - Test fixtures (use synthetic/throwaway data only)
+- **Git hooks:** use pre-commit checks to catch secrets before they reach the repo. Tools: `ggshield` (GitGuardian), `git-secrets`, `gitleaks`.
+- **If a secret leaks:** immediately rotate it (revoke the token/key), then use `git filter-branch` or `git reset` to remove it from history. Report the incident.
+- **Decoys in sandbox:** synthetic credentials in the sandboxed home are intentional (rule `FS-DECOY-READ`); they stay in the codebase as test fixtures, not real secrets.
+
 ## Testing
 - Each task ends with tests plus a runnable demo.
 - Detection rules get one fixture per rule under `tests/fixtures/`.
