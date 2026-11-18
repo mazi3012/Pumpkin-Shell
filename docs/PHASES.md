@@ -11,8 +11,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | Phase | Name | PRD | Platform | Milestone | Status |
 |---|---|---|---|---|---|
 | 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3, 1.4 optional, not applied) |
-| 2 | Workspace skeleton and CI | T1 | Both | | in-progress |
-| 3 | `doctor` (Linux) | T1 | Linux | | todo |
+| 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
+| 3 | `doctor` (Linux) | T1 | Linux | | in-progress |
 | 4 | `scan` | T4 | Both | **v0.1** | todo |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
