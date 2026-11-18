@@ -1,0 +1,3 @@
+# Keep LF line endings on every OS so `cargo fmt --check` gives the same
+# result on the Windows CI runner as on Linux.
+* text=auto eol=lf

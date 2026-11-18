@@ -1,0 +1,19 @@
+/target/
+**/*.rs.bk
+*.pdb
+
+# local Pumpkin-Shell state from dev runs
+.pumpkin-shell/
+
+# editors / OS
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- ltm-power ---
+ltm/store/*.jsonl
+ltm/runtime/*
+ltm/reports/*
+ltm/snapshots/*
+# --- /ltm-power ---
