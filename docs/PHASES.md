@@ -64,8 +64,11 @@ Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <
 2.5. Add `target/` to `.gitignore`.
 
 **Done when:**
-- All CI jobs pass locally on Linux.
-- CI is green on both runners. This needs the branch pushed to GitHub. Open question: the local `origin` is `mazi3012/pumkinshell` but the PRD names `mazi3012/pumpkin-shell`; both exist.
+- [x] All CI jobs pass locally on Linux (fmt, clippy, test, cargo-deny, cargo-audit; checked 2026-11-19).
+- [ ] CI is green on both runners. Needs the branch pushed to GitHub. Open question: the local `origin` is `mazi3012/pumkinshell` but the PRD names `mazi3012/pumpkin-shell`; both exist.
+- [ ] PR opened and reviewed (`in-review (PR #n)`).
+
+Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] workflow written, not yet run on GitHub, 2.5 [x].
 
 **Blocked by:** Q1 (final binary name) only if you want a different name than `pumpkin-shell`. Q6 (license) for crate metadata; `license` can stay unset until decided.
 
