@@ -66,6 +66,10 @@ inclusion: always
 7. Review feedback goes into new commits on the same branch. Never force-push a branch that is under review unless the user asks.
 8. After the user merges: update `main`, set the phase to `done` in `PHASES.md` (in the next phase's branch), save an LTM checkpoint, then start the next phase.
 
+## Communication style (user rule)
+- Keep chat replies short. Explain in more detail only when the user asks.
+- Summarize like a human: plain sentences, the result first, no filler.
+
 ## Existing rules are binding (user rule)
 - Never override, weaken or bypass rules from `.kiro/steering/` or `.kiro/hooks/`.
 - If a request conflicts with a steering or hook rule, stop and ask the user before acting.
