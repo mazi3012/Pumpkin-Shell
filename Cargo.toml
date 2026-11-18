@@ -1,0 +1,26 @@
+[workspace]
+resolver = "3"
+members = ["crates/pks-cli"]
+
+[workspace.package]
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.100.0"
+publish = false
+repository = "https://github.com/mazi3012/pumpkin-shell"
+# license: not set until DECISIONS Q6 is answered.
+
+[workspace.dependencies]
+# Versions checked on crates.io before adding (tech.md "Versions" rule).
+clap = { version = "4.6.8", features = ["derive"] }
+
+[workspace.lints.rust]
+# tech.md: no `unsafe` except in thin, documented FFI wrappers. A crate that
+# needs one overrides this locally, with a comment explaining why.
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+# tech.md: no unwrap()/expect() on paths that handle untrusted input.
+# clippy.toml allows them in tests.
+unwrap_used = "deny"
+expect_used = "deny"
