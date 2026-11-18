@@ -18,3 +18,4 @@ Pumpkin-Shell is a Rust tool that launches AI-powered IDEs (Kiro first, then VS 
 - Never claim "0% bypass". Report N/N on a published escape corpus.
 - Low friction: every block message names the policy line that would allow it.
 - Record new decisions in `docs/DECISIONS.md`.
+- One phase at a time, fully tested, one PR per phase. **Never merge a PR or push to `main` without the user's explicit permission for that specific PR** (see `organization.md`).

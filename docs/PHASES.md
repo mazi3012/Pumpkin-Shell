@@ -11,7 +11,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | Phase | Name | PRD | Platform | Milestone | Status |
 |---|---|---|---|---|---|
 | 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3, 1.4 optional, not applied) |
-| 2 | Workspace skeleton and CI | T1 | Both | | todo |
+| 2 | Workspace skeleton and CI | T1 | Both | | in-progress |
 | 3 | `doctor` (Linux) | T1 | Linux | | todo |
 | 4 | `scan` | T4 | Both | **v0.1** | todo |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
@@ -31,7 +31,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 
 Phase 6 is out of number order on purpose. The PRD runs both proofs of concept early so the design can change before anything depends on it. If no Windows machine is available, skip Phase 6 and continue with Phase 7. It must be done before Phase 16.
 
-Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this table when a phase changes state.
+Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <reason>`. Update this table when a phase changes state.
 
 ---
 
@@ -58,16 +58,14 @@ Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this t
 **Goal:** an empty but buildable workspace with CI on Linux and Windows.
 
 2.1. Root `Cargo.toml` workspace, `rust-toolchain.toml` (pinned stable), `deny.toml`, and a committed `Cargo.lock`.
-2.2. Crates: `pks-cli` (binary `pumpkin-shell`, clap derive), `pks-core`, `pks-scan`, `pks-sandbox`. Create only these four. Later crates are added in the phase that needs them (see `structure.md`).
-2.3. `pks-core`: `Severity` (INFO, NOTICE, WARN, HIGH, CRITICAL), `RuleId`, `Action`, `Finding` (rule, severity, target, message, fix hint). Rules are data, so `scan`, the watcher and the proxy share one type.
-2.4. `pks-sandbox`: `SandboxBackend` trait with empty `linux` and `windows` modules behind `#[cfg(target_os)]`.
-2.5. `pumpkin-shell --version` and `--help` work.
-2.6. GitHub Actions workflow on `ubuntu-latest` and `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, `cargo audit`.
-2.7. Add `target/` to `.gitignore`.
+2.2. Crate `pks-cli` only (binary `pumpkin-shell`, clap derive). Other crates are created in the phase that first uses them, per the no-dead-code rule in `tech.md`: `pks-core` in Phase 3, `pks-scan` in Phase 4, `pks-sandbox` in Phase 8.
+2.3. `pumpkin-shell --version` and `--help` work, with integration tests.
+2.4. GitHub Actions workflow on `ubuntu-latest` and `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, `cargo audit`.
+2.5. Add `target/` to `.gitignore`.
 
 **Done when:**
 - All CI jobs pass locally on Linux.
-- CI is green on both runners. This needs the GitHub repo `mazi3012/pumpkin-shell` to exist and be pushed to.
+- CI is green on both runners. This needs the branch pushed to GitHub. Open question: the local `origin` is `mazi3012/pumkinshell` but the PRD names `mazi3012/pumpkin-shell`; both exist.
 
 **Blocked by:** Q1 (final binary name) only if you want a different name than `pumpkin-shell`. Q6 (license) for crate metadata; `license` can stay unset until decided.
 
@@ -77,6 +75,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this t
 
 **Goal:** `pumpkin-shell doctor` tells the user whether this machine can run the sandbox, and how to fix it if not.
 
+3.0. Create crate `pks-core` with the shared types `doctor` needs: `Severity` (INFO, NOTICE, WARN, HIGH, CRITICAL), `RuleId`, `Finding` (rule, severity, target, message, fix hint). Rules are data, so `doctor`, `scan`, the watcher and the proxy share one type. Add only the types this phase uses.
 3.1. Check framework: each check returns pass / warn / fail plus a one-line fix.
 3.2. Kernel version (≥ 5.13 required, ≥ 6.7 recommended).
 3.3. `bwrap` present and ≥ 0.8.
@@ -97,6 +96,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this t
 
 **Goal:** a static scanner that finds agent-escape setups in a repo and works in CI. Pure Rust, no sandbox needed.
 
+4.0. Create crate `pks-scan`.
 4.1. Workspace walker: respects `.gitignore`, never follows symlinks out of the repo, compares paths by component (CVE-2025-54794).
 4.2. `WS-HIDDEN-UNICODE`: tag chars U+E0000–U+E007F, bidi controls, zero-width characters. Report file, line and code point.
 4.3. `WS-AUTOAPPROVE`: `chat.tools.autoApprove` in `.vscode/settings.json` (and Cursor/Windsurf equivalents); MCP `autoApprove` in `.kiro/settings/mcp.json`, `.mcp.json`, `.cursor/mcp.json`.
@@ -175,6 +175,7 @@ Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this t
 
 **Goal:** `pumpkin-shell ide kiro .` launches Kiro in the sandbox from Rust, using what Phase 5 learned.
 
+8.0. Create crate `pks-sandbox` with the `SandboxBackend` trait and its Linux implementation behind `#[cfg(target_os = "linux")]`. The Windows implementation is added in Phase 16.
 8.1. Implement `SandboxBackend` for Linux: build the bwrap argument vector (never a shell string).
 8.2. Read-only root including the IDE install, read-write repo, persistent per-IDE home.
 8.3. Filtered environment. Not passed in: `SSH_AUTH_SOCK`, D-Bus session bus, `docker.sock`, `/run/user/$UID`.
@@ -347,6 +348,8 @@ Status values: `todo`, `in-progress`, `done`, `blocked: <reason>`. Update this t
 
 ## Rules for working through phases
 
+- Each phase is built on its own branch, fully tested, and delivered as exactly one PR. The user reviews it. **Never merge a PR without the user's explicit permission for that PR.** Full rules: "One phase, one PR" in `.kiro/steering/organization.md`.
+- A phase becomes `done` only after the user merges its PR. While waiting, its status is `in-review (PR #<n>)`.
 - Start a phase only when the previous phase (in number order) is `done`, except Phase 6 as noted above.
 - Before a phase starts, check its **Blocked by** line and resolve or ask about each open question.
 - Every phase ends with tests and a runnable demo (`tech.md`).

@@ -48,8 +48,24 @@ inclusion: always
 - Only write facts that have been verified (docs, code, or a command run on this machine). Mark anything unverified with `*`, as the PRD does.
 - Front-matter: `inclusion: always` for project-wide rules; `inclusion: auto` with `name` and `description` for topic files; `inclusion: fileMatch` with `fileMatchPattern` for file-type rules.
 
+## One phase, one PR (user rule, non-negotiable)
+
+1. **One phase at a time.** Build only the current phase from `docs/PHASES.md`. Don't start the next phase until the user has reviewed and merged the current phase's PR.
+2. **One branch per phase**, created from an up-to-date `main`: `phase-<N>-<short-name>` (e.g. `phase-2-workspace-skeleton`). Never commit or push directly to `main`.
+3. **Test everything before opening the PR.** All of these must pass, with no skipped or ignored tests:
+   - every item in the phase's **Done when** list, checked by actually running it;
+   - every numbered step of the phase has tests that cover it;
+   - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test`, `cargo deny check`, `cargo audit`;
+   - CI is green on every runner, once CI exists.
+   If anything fails, fix it before opening the PR. If something truly can't be tested on this machine (e.g. Windows-only code), say so in the PR description; don't claim it passed.
+4. **One PR per phase.** Push the branch and open exactly one PR. PR description: phase number and name, what changed, the Done-when checklist with the result of each item, the test and check output, and anything not verified.
+5. **Stop and wait.** After opening the PR, tell the user it's ready for review and stop. Don't start the next phase and don't open another PR.
+6. **Never merge without explicit permission.** Do not merge, squash, rebase-merge, approve, enable auto-merge, or push to `main`, even if CI is green and the review looks done. Merge only when the user explicitly says to merge **that specific PR** in the current conversation. Permission for one PR does not carry over to any other PR. If unsure, ask.
+7. Review feedback goes into new commits on the same branch. Never force-push a branch that is under review unless the user asks.
+8. After the user merges: update `main`, set the phase to `done` in `PHASES.md` (in the next phase's branch), save an LTM checkpoint, then start the next phase.
+
 ## Git
 
-- Small commits, one logical change each. Run the checks in `tech.md` before committing Rust code.
-- Branch strategy and commit-message format are not decided yet. Use plain imperative commit messages ("Add doctor kernel check") until a convention is recorded in `DECISIONS.md`.
+- Small commits, one logical change each, inside the phase branch. Run the checks in `tech.md` before committing Rust code.
+- Commit messages: plain imperative ("Add doctor kernel check").
 - Never commit secrets. The LTM store is local-only for that reason.

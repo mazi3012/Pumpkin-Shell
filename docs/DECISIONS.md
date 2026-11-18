@@ -19,6 +19,7 @@ Record every product or architecture decision here with a date. Never delete ent
 | 2026-11-19 | Never claim "0% bypass"; report N/N on a published corpus | Credibility |
 | 2026-11-19 | Toolchain: Rust **1.100.0** via rustup 1.29.3 (clippy, rustfmt); cargo-deny **0.21.0**, cargo-audit **0.23.0** | Latest stable, checked at doc.rust-lang.org/releases.html and the crates.io API on 2026-11-19 |
 | 2026-11-19 | Always use the latest stable version of tools and dependencies, verified online before installing; pin exact versions | User decision |
+| 2026-11-19 | Workflow: one phase at a time on branch `phase-<N>-<name>`, fully tested, one PR per phase. The agent never merges or pushes to `main`; merge only with the user's explicit permission for that specific PR | User decision |
 
 ## Assumed defaults (not yet confirmed by user)
 

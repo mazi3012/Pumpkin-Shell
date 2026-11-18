@@ -26,6 +26,14 @@
 - Secrets never go into logs, receipts, or error messages.
 - Dependencies: justify each new crate; prefer well-maintained ones; `cargo-deny` and `cargo-audit` must pass. Commit `Cargo.lock`.
 
+## No dead code (user rule)
+- Never leave dead code: no unused functions, types, modules, crates, dependencies, feature flags, commented-out code, or placeholder stubs "for later".
+- Add code only in the phase that uses it. Don't scaffold empty crates, traits or modules ahead of time; create them in the phase whose code calls them.
+- `#[allow(dead_code)]`, `#[allow(unused)]` and `_`-prefixed names that hide unused code are not allowed. Fix the cause instead.
+- `TODO` comments are allowed only with a phase number (`// TODO(phase 9): ...`) and only when that phase is in `docs/PHASES.md`.
+- **Removing code:** when code becomes unused (a feature was abandoned, or the user asks to remove something), ask the user **once** to confirm, listing exactly what will be removed. After the user confirms, remove all of it in one change, including tests, fixtures, docs and steering references. Don't ask again for the same removal.
+- Before every PR: `cargo clippy --all-targets -- -D warnings` (which fails on unused code), and a manual check that each new dependency is used.
+
 ## Testing
 - Each task ends with tests plus a runnable demo.
 - Detection rules get one fixture per rule under `tests/fixtures/`.
