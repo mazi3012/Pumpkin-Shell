@@ -1,10 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pks-core", "crates/pks-cli", "crates/pks-policy", "crates/pks-scan"]
-
-[workspace.dependencies]
-# Base64 for encoding/decoding
-base64 = "0.21.7"
+members = ["crates/pks-core", "crates/pks-cli", "crates/pks-policy", "crates/pks-scan", "crates/pks-sandbox"]
 
 [workspace.package]
 version = "0.0.0"

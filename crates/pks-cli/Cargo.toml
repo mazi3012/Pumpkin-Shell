@@ -16,6 +16,7 @@ clap.workspace = true
 pks-core = { path = "../pks-core", version = "0.0.0" }
 pks-policy = { path = "../pks-policy", version = "0.1.0" }
 pks-scan = { path = "../pks-scan", version = "0.0.0" }
+pks-sandbox = { path = "../pks-sandbox", version = "0.1.0" }
 serde.workspace = true
 serde_json.workspace = true
 anyhow = "1.0.89"

@@ -1,6 +1,7 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
 mod doctor;
+mod ide;
 mod log;
 mod policy;
 mod scan;
@@ -41,6 +42,9 @@ enum Command {
         ci: bool,
     },
 
+    /// Launch an IDE in the sandbox.
+    Ide(IdeArgs),
+
     /// Policy management commands.
     Policy {
         #[command(subcommand)]
@@ -54,12 +58,23 @@ enum Command {
     },
 }
 
+#[derive(Parser)]
+pub struct IdeArgs {
+    /// IDE to launch (e.g., kiro)
+    pub ide: String,
+
+    /// Path to the repository (default: current directory)
+    #[arg(short, long, default_value = ".")]
+    pub repo: String,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
 
     match cli.command {
         Some(Command::Doctor { json }) => doctor::run(json),
         Some(Command::Scan { path, json, ci }) => scan::run(&path, json, ci),
+        Some(Command::Ide(args)) => ide::run(&args.ide, &args.repo),
         Some(Command::Policy { cmd }) => match policy::handle_policy_cmd(&cmd) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
