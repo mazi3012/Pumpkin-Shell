@@ -219,6 +219,40 @@ fn every_isolation_probe_passes_inside_the_real_sandbox() -> TestResult {
     Ok(())
 }
 
+/// PRD scenario 8: `rm -rf src/` inside the sandbox is a mass delete. The
+/// host finds it against the snapshot, and restore brings the files back.
+#[test]
+fn a_mass_delete_inside_the_sandbox_is_found_and_restored() -> TestResult {
+    let layout = Layout::new()?;
+    let src = layout.repo.join("src");
+    fs::create_dir_all(&src)?;
+    for index in 0..60 {
+        fs::write(src.join(format!("file{index}.rs")), format!("// {index}\n"))?;
+    }
+    fs::write(layout.repo.join("README.md"), "keep\n")?;
+    let session = tempfile::tempdir()?;
+    pks_core::snapshot::create(&layout.repo, session.path())?;
+
+    let script = "rm -rf /workspace/src\nexit 0\n";
+    let status = backend()?.run(&layout.spec_running(script))?;
+    assert!(status.success(), "{status}");
+    assert!(!src.exists(), "the delete did not happen");
+
+    let finding = pks_core::snapshot::check_mass_delete(&layout.repo, session.path(), "sid")?
+        .ok_or("the mass delete was not found")?;
+    assert_eq!(finding.rule.as_str(), "WS-MASS-DELETE");
+
+    let target = layout
+        .repo
+        .parent()
+        .unwrap_or(&layout.repo)
+        .join("recovered");
+    pks_core::snapshot::restore_into(session.path(), &target)?;
+    assert_eq!(fs::read_to_string(target.join("src/file7.rs"))?, "// 7\n");
+    assert_eq!(fs::read_to_string(target.join("README.md"))?, "keep\n");
+    Ok(())
+}
+
 /// Two free loopback ports. Each listener is kept open by the caller.
 fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;

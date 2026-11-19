@@ -17,6 +17,8 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use crate::{Finding, RuleId, Severity};
+
 /// Name of the bare git directory inside a session directory.
 pub const SNAPSHOT_DIR: &str = "snapshot.git";
 
@@ -115,6 +117,88 @@ pub fn create(repo: &Path, session_dir: &Path) -> Result<String, SnapshotError> 
         )));
     }
     Ok(commit_id)
+}
+
+/// The rule for many files gone from the repo during a session (PRD FR-DET).
+pub const WS_MASS_DELETE: RuleId = RuleId::new("WS-MASS-DELETE");
+
+/// The paths in the snapshot, as git stores them (`/`-separated, relative to
+/// the repo root).
+///
+/// # Errors
+/// Fails when git fails or its output is not read.
+pub fn paths(session_dir: &Path) -> Result<Vec<String>, SnapshotError> {
+    let bare = session_dir.join(SNAPSHOT_DIR);
+    let mut list = git(session_dir)?;
+    list.arg(format!("--git-dir={}", bare.display())).args([
+        "ls-tree",
+        "-r",
+        "-z",
+        "--name-only",
+        "HEAD",
+    ]);
+    let output = list.output().map_err(|source| SnapshotError::Io {
+        context: "cannot run git ls-tree".to_owned(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(SnapshotError::Git(format!(
+            "ls-tree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect())
+}
+
+/// The paths that are no longer in `repo`. A path counts as present when
+/// anything is at it, including a symlink.
+#[must_use]
+pub fn missing_in(repo: &Path, paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .filter(|path| repo.join(path.as_str()).symlink_metadata().is_err())
+        .cloned()
+        .collect()
+}
+
+/// Whether `missing` files out of `total` is a mass delete: more than 50
+/// files, or more than 20% of the files (PRD FR-DET, WS-MASS-DELETE).
+#[must_use]
+pub fn is_mass_delete(total: usize, missing: usize) -> bool {
+    missing > 50 || missing.saturating_mul(5) > total
+}
+
+/// Checks the repo against its snapshot. Returns a HIGH finding with a
+/// restore hint when the session deleted too many files.
+///
+/// # Errors
+/// Fails when the snapshot cannot be read.
+pub fn check_mass_delete(
+    repo: &Path,
+    session_dir: &Path,
+    session_id: &str,
+) -> Result<Option<Finding>, SnapshotError> {
+    let all = paths(session_dir)?;
+    let missing = missing_in(repo, &all);
+    if !is_mass_delete(all.len(), missing.len()) {
+        return Ok(None);
+    }
+    Ok(Some(Finding {
+        rule: WS_MASS_DELETE,
+        severity: Severity::High,
+        target: repo.display().to_string(),
+        message: format!(
+            "{} of {} files from the start of the session are gone",
+            missing.len(),
+            all.len()
+        ),
+        fix: format!("Restore them with: pumpkin-shell restore {session_id}"),
+    }))
 }
 
 /// Whether `text` is a session id: 32 lowercase hex digits, as made by
@@ -294,5 +378,61 @@ mod tests {
         assert!(!is_session_id("A718A3B91B21D03E806200A10513A1A0"));
         assert!(!is_session_id("a718a3b91b21d03e806200a10513a1a"));
         assert!(!is_session_id(""));
+    }
+
+    #[test]
+    fn the_mass_delete_thresholds_follow_the_prd() {
+        // 20% of 100 is 20; more than 20% is 21.
+        assert!(!is_mass_delete(100, 20));
+        assert!(is_mass_delete(100, 21));
+        // Over 50 files is a mass delete on its own.
+        assert!(is_mass_delete(1000, 51));
+        assert!(!is_mass_delete(1000, 50));
+        assert!(is_mass_delete(1000, 150));
+        assert!(!is_mass_delete(0, 0));
+        assert!(is_mass_delete(10, 3));
+    }
+
+    #[test]
+    fn deleting_a_whole_source_directory_is_a_high_finding_with_a_restore_hint() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = root.path().join("repo");
+        for index in 0..60 {
+            write(&repo.join(format!("src/file{index}.rs")), "x\n")?;
+        }
+        write(&repo.join("README.md"), "keep\n")?;
+        let session = root.path().join("session");
+        fs::create_dir_all(&session)?;
+        create(&repo, &session)?;
+        assert!(check_mass_delete(&repo, &session, "sid")?.is_none());
+        fs::remove_dir_all(repo.join("src"))?;
+        let finding = check_mass_delete(&repo, &session, "sid")?
+            .ok_or("expected a finding after the delete")?;
+        assert_eq!(finding.rule.as_str(), "WS-MASS-DELETE");
+        assert_eq!(finding.severity, Severity::High);
+        assert!(
+            finding.message.starts_with("60 of 61"),
+            "{}",
+            finding.message
+        );
+        assert_eq!(finding.fix, "Restore them with: pumpkin-shell restore sid");
+        Ok(())
+    }
+
+    #[test]
+    fn a_few_deleted_files_in_a_large_repo_are_not_a_mass_delete() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = root.path().join("repo");
+        for index in 0..100 {
+            write(&repo.join(format!("f{index}.txt")), "x\n")?;
+        }
+        let session = root.path().join("session");
+        fs::create_dir_all(&session)?;
+        create(&repo, &session)?;
+        for index in 0..5 {
+            fs::remove_file(repo.join(format!("f{index}.txt")))?;
+        }
+        assert!(check_mass_delete(&repo, &session, "sid")?.is_none());
+        Ok(())
     }
 }

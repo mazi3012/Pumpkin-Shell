@@ -119,6 +119,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         session.id
     );
     let result = backend.run(&spec);
+    session.check_workspace(repo);
     session.close();
     match result {
         Ok(status) => match status.code() {
@@ -145,6 +146,10 @@ fn ide_name(ide: Ide) -> &'static str {
 #[cfg(target_os = "linux")]
 struct Session {
     id: String,
+    /// The session directory: holds the snapshot and the session log.
+    dir: PathBuf,
+    /// Hash of the policy in force, written into every log record.
+    policy_hash: String,
     socket: PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
@@ -186,6 +191,7 @@ impl Session {
             .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
 
         let policy_hash = effective.hash();
+        let session_policy_hash = policy_hash.clone();
         let sink_log = Arc::clone(&log);
         let events: pks_proxy::EventSink = Arc::new(move |finding| {
             eprintln!(
@@ -228,6 +234,8 @@ impl Session {
         });
         Ok(Self {
             id,
+            dir,
+            policy_hash: session_policy_hash,
             socket,
             stop,
             server: Some(server),
@@ -235,6 +243,40 @@ impl Session {
         })
     }
 
+    /// Compares the repo with the snapshot taken at the start, and reports a
+    /// mass delete (WS-MASS-DELETE) on the terminal and in the signed log.
+    fn check_workspace(&self, repo: &Path) {
+        match pks_core::snapshot::check_mass_delete(repo, &self.dir, &self.id) {
+            Ok(Some(finding)) => {
+                eprintln!(
+                    "[{:?}] {} {}: {}",
+                    finding.severity,
+                    finding.rule.as_str(),
+                    finding.target,
+                    finding.message
+                );
+                eprintln!("ide: {}", finding.fix);
+                if let Ok(mut guard) = self.log.lock()
+                    && let Some(logger) = guard.as_mut()
+                {
+                    let _ = logger.append(
+                        &Record {
+                            policy_hash: &self.policy_hash,
+                            layer: "ws",
+                            target: &finding.target,
+                            rule: finding.rule.as_str(),
+                            verdict: "alert",
+                        },
+                        now_ms(),
+                    );
+                }
+            }
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("ide: could not check the workspace against the snapshot: {error}");
+            }
+        }
+    }
     /// Stops the proxy, closes the log with its signed checkpoint, and removes
     /// the socket.
     fn close(mut self) {
