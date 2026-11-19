@@ -1,10 +1,16 @@
 //! `pumpkin-shell ide <kiro|code> [PATH]`: opens a repository in an IDE that
-//! runs inside the sandbox (PRD §6.1, Phase 8).
+//! runs inside the sandbox (PRD §6.1, Phases 8 and 9).
+//!
+//! A session does four things: it loads the user policy (refusing to start
+//! if the policy is invalid), starts the egress proxy on a session socket,
+//! records every decision in a signed log, and runs the IDE.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::ValueEnum;
+#[cfg(target_os = "linux")]
+use pks_core::log::Record;
 
 /// The IDEs this build can launch. Only installs under `/usr` are accepted.
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -29,7 +35,17 @@ fn install(ide: Ide) -> pks_sandbox::IdeInstall {
     }
 }
 
-/// Runs the IDE on `repo`. Returns the IDE's exit code, or 2 when the sandbox
+/// Creates `dir` and missing parents, each with mode 0700.
+#[cfg(target_os = "linux")]
+fn create_private_dir(dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::DirBuilderExt;
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+/// Runs the IDE on `repo`. Returns the IDE's exit code, or 2 when the session
 /// could not start (the IDE is not started in that case).
 #[cfg(target_os = "linux")]
 pub fn run(ide: Ide, repo: &Path) -> ExitCode {
@@ -56,6 +72,16 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
     if !repo.is_dir() {
         return setup(format!("{} is not a directory", repo.display()));
     }
+    let policy = match pks_core::policy::read_user_policy(&config) {
+        Ok(found) => found.unwrap_or_else(pks_core::policy::empty_user_policy),
+        Err(error) => return setup(format!("your policy is not valid: {error}")),
+    };
+    let effective = pks_core::policy::Effective::from_user(&policy);
+    let session = match Session::start(&data, &effective) {
+        Ok(session) => session,
+        Err(message) => return setup(message),
+    };
+
     let spec_install = install(ide);
     let ide_home = data.join("ide-home").join(spec_install.name);
     if let Err(error) = create_private_dir(&ide_home) {
@@ -74,6 +100,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         ],
         roots: Roots { home, config, data },
         display_size: (1280, 800),
+        proxy_socket: session.socket.clone(),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -84,12 +111,15 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         Err(error) => return setup(error.to_string()),
     };
     eprintln!(
-        "ide: starting {} on {} ({})",
+        "ide: starting {} on {} ({}; session {})",
         ide_name(ide),
         repo.display(),
-        backend.name()
+        backend.name(),
+        session.id
     );
-    match backend.run(&spec) {
+    let result = backend.run(&spec);
+    session.close();
+    match result {
         Ok(status) => match status.code() {
             Some(code) => ExitCode::from(u8::try_from(code.clamp(0, 255)).unwrap_or(1)),
             None => {
@@ -110,14 +140,153 @@ fn ide_name(ide: Ide) -> &'static str {
     }
 }
 
-/// Creates `dir` and missing parents, each with mode 0700.
+/// One session: the proxy, its socket, and the signed log of its decisions.
 #[cfg(target_os = "linux")]
-fn create_private_dir(dir: &Path) -> std::io::Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
+struct Session {
+    id: String,
+    socket: PathBuf,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    server: Option<std::thread::JoinHandle<()>>,
+    log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Session {
+    fn start(data: &Path, effective: &pks_core::policy::Effective) -> Result<Self, String> {
+        use pks_core::keys;
+        use pks_core::log::{Logger, new_session_id};
+        use pks_proxy::{Config, Engine, serve};
+        use std::os::unix::net::UnixListener;
+        use std::sync::atomic::AtomicBool;
+        use std::sync::{Arc, Mutex};
+
+        let id = new_session_id().map_err(|e| format!("cannot make a session id: {e}"))?;
+        let sessions = data.join("sessions");
+        create_private_dir(&sessions)
+            .map_err(|e| format!("cannot create {}: {e}", sessions.display()))?;
+        let dir = sessions.join(&id);
+        create_private_dir(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        let key = keys::load_or_create_signing_key(&data.join("keys"))
+            .map_err(|e| format!("signing key: {e}"))?;
+        let logger = Logger::create(&dir.join("session.jsonl"), key, &id)
+            .map_err(|e| format!("cannot open the session log: {e}"))?;
+        let log = Arc::new(Mutex::new(Some(logger)));
+        let socket = dir.join("proxy.sock");
+        let listener = UnixListener::bind(&socket)
+            .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
+
+        let policy_hash = effective.hash();
+        let sink_log = Arc::clone(&log);
+        let events: pks_proxy::EventSink = Arc::new(move |finding| {
+            eprintln!(
+                "[{:?}] {} {}: {}",
+                finding.severity,
+                finding.rule.as_str(),
+                finding.target,
+                finding.message
+            );
+            if let Ok(mut guard) = sink_log.lock()
+                && let Some(logger) = guard.as_mut()
+            {
+                let verdict = verdict_of(finding.rule.as_str(), &finding.message);
+                let _ = logger.append(
+                    &Record {
+                        policy_hash: &policy_hash,
+                        layer: "net",
+                        target: &finding.target,
+                        rule: finding.rule.as_str(),
+                        verdict,
+                    },
+                    now_ms(),
+                );
+            }
+        });
+        let engine = Engine::new(Config {
+            allow: effective.allow.clone(),
+            mode: effective.mode,
+            resolver: Arc::new(pks_proxy::SystemResolver),
+            dialer: Arc::new(pks_proxy::TcpDialer),
+            asker: Arc::new(TerminalAsker),
+            events,
+            hold: pks_proxy::engine::ASK_HOLD,
+        });
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stop);
+        let server = std::thread::spawn(move || {
+            let _ = serve(listener, Arc::new(engine), stop_flag);
+        });
+        Ok(Self {
+            id,
+            socket,
+            stop,
+            server: Some(server),
+            log,
+        })
+    }
+
+    /// Stops the proxy, closes the log with its signed checkpoint, and removes
+    /// the socket.
+    fn close(mut self) {
+        use std::sync::atomic::Ordering;
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(handle) = self.server.take() {
+            let _ = handle.join();
+        }
+        let _ = std::fs::remove_file(&self.socket);
+        if let Ok(mut guard) = self.log.lock()
+            && let Some(logger) = guard.take()
+            && let Err(error) = logger.finish(now_ms())
+        {
+            eprintln!("ide: could not close the session log: {error}");
+        }
+    }
+}
+
+/// The verdict a finding records. Blocked connections are `block`; monitor
+/// mode lets them through and records them as `monitor`.
+#[cfg(target_os = "linux")]
+fn verdict_of(rule: &str, message: &str) -> &'static str {
+    match rule {
+        "NET-UNKNOWN-DOMAIN" if message.contains("monitor mode") => "monitor",
+        "NET-LARGE-UPLOAD" => "warn",
+        _ => "block",
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
+        })
+}
+
+/// Asks in the terminal. With no terminal (headless), nobody can answer, and
+/// the engine denies (PRD FR-NET: "deny when headless").
+#[cfg(target_os = "linux")]
+struct TerminalAsker;
+
+#[cfg(target_os = "linux")]
+impl pks_proxy::Asker for TerminalAsker {
+    fn ask(&self, endpoint: &pks_core::net::HostPort) -> Option<pks_proxy::Answer> {
+        use std::io::{BufRead, IsTerminal, Write};
+        if !std::io::stdin().is_terminal() {
+            return None;
+        }
+        eprint!(
+            "ide: allow connection to {endpoint}? [o]nce / [s]ession / [d]eny (default deny, 20 s): "
+        );
+        let _ = std::io::stderr().flush();
+        let mut line = String::new();
+        std::io::stdin().lock().read_line(&mut line).ok()?;
+        match line.trim().to_ascii_lowercase().as_str() {
+            "o" | "once" => Some(pks_proxy::Answer::AllowOnce),
+            "s" | "session" => Some(pks_proxy::Answer::AllowSession),
+            _ => Some(pks_proxy::Answer::Deny),
+        }
+    }
 }
 
 /// The sandbox is Linux-only until Phase 16.
@@ -127,17 +296,51 @@ pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
     ExitCode::from(EXIT_SETUP)
 }
 
-/// The in-sandbox step: applies Landlock and the seccomp filter, then runs
-/// `command`. Called by bubblewrap, not by users.
+/// The in-sandbox step: applies Landlock, starts the relay if given, applies
+/// seccomp, then runs `command`. Called by bubblewrap, not by users.
 #[cfg(target_os = "linux")]
-pub fn sandbox_init(rw: &[PathBuf], ro: &[PathBuf], command: &[std::ffi::OsString]) -> ExitCode {
-    let error = pks_sandbox::linux::init::run(rw, ro, command);
+pub fn sandbox_init(
+    rw: &[PathBuf],
+    ro: &[PathBuf],
+    relay_listen: Option<std::net::SocketAddr>,
+    relay_socket: Option<PathBuf>,
+    command: &[std::ffi::OsString],
+) -> ExitCode {
+    let relay = match (relay_listen, relay_socket) {
+        (Some(listen), Some(socket)) => Some(pks_sandbox::linux::init::Relay { listen, socket }),
+        _ => None,
+    };
+    let error = pks_sandbox::linux::init::run(rw, ro, command, relay.as_ref());
     eprintln!("sandbox-init: {error}");
     ExitCode::from(126)
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn sandbox_init(_rw: &[PathBuf], _ro: &[PathBuf], _command: &[std::ffi::OsString]) -> ExitCode {
+pub fn sandbox_init(
+    _rw: &[PathBuf],
+    _ro: &[PathBuf],
+    _relay_listen: Option<std::net::SocketAddr>,
+    _relay_socket: Option<PathBuf>,
+    _command: &[std::ffi::OsString],
+) -> ExitCode {
     eprintln!("sandbox-init: Linux only");
     ExitCode::from(126)
+}
+
+/// The relay inside the sandbox. Runs until the sandbox ends.
+#[cfg(target_os = "linux")]
+pub fn sandbox_relay(listen: std::net::SocketAddr, socket: &Path) -> ExitCode {
+    match pks_sandbox::linux::relay::run(listen, socket) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("sandbox-relay: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sandbox_relay(_listen: std::net::SocketAddr, _socket: &Path) -> ExitCode {
+    eprintln!("sandbox-relay: Linux only");
+    ExitCode::from(1)
 }

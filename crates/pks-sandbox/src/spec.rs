@@ -49,6 +49,9 @@ pub struct LaunchSpec {
     pub roots: Roots,
     /// Size of the nested display, in pixels.
     pub display_size: (u32, u32),
+    /// Unix socket of the egress proxy (Phase 9). The IDE reaches it through
+    /// a relay inside the sandbox; it is the only route out.
+    pub proxy_socket: PathBuf,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -151,6 +154,14 @@ pub fn check(spec: &LaunchSpec) -> Result<(), SandboxError> {
         return Err(refuse(format!("{} is not executable", binary.display())));
     }
 
+    let proxy = canonical(&spec.proxy_socket, "proxy socket")?;
+    if !is_socket(&proxy) {
+        return Err(refuse(format!(
+            "{} is not the proxy's socket",
+            proxy.display()
+        )));
+    }
+
     let (width, height) = spec.display_size;
     if !(320..=8192).contains(&width) || !(240..=8192).contains(&height) {
         return Err(refuse(
@@ -158,6 +169,17 @@ pub fn check(spec: &LaunchSpec) -> Result<(), SandboxError> {
         ));
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn is_socket(path: &Path) -> bool {
+    use std::os::unix::fs::FileTypeExt;
+    fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_socket())
+}
+
+#[cfg(not(unix))]
+fn is_socket(_path: &Path) -> bool {
+    true
 }
 
 #[cfg(unix)]
@@ -201,6 +223,8 @@ mod tests {
             let binary = ide_dir.join("kiro");
             fs::write(&binary, "#!/bin/sh\n")?;
             set_exec(&binary)?;
+            let proxy = base.join("proxy.sock");
+            bind_socket(&proxy)?;
             let spec = LaunchSpec {
                 repo,
                 ide: IdeInstall {
@@ -212,9 +236,21 @@ mod tests {
                 ide_args: Vec::new(),
                 roots: Roots { home, config, data },
                 display_size: (1280, 800),
+                proxy_socket: proxy.clone(),
             };
             Ok(Self { _dir: dir, spec })
         }
+    }
+
+    #[cfg(unix)]
+    fn bind_socket(path: &Path) -> std::io::Result<()> {
+        // A real socket: the spec check looks for one.
+        std::os::unix::net::UnixListener::bind(path).map(drop)
+    }
+
+    #[cfg(not(unix))]
+    fn bind_socket(_path: &Path) -> std::io::Result<()> {
+        Ok(())
     }
 
     #[cfg(unix)]

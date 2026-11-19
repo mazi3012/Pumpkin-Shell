@@ -80,7 +80,7 @@ pub fn trust(repo: &Path) -> ExitCode {
     // Never pin a file that could not be applied.
     let parsed = match std::str::from_utf8(&file.bytes)
         .map_err(|_| "not valid UTF-8".to_owned())
-        .and_then(|text| PolicyFile::parse(text).map_err(|error| error.to_string()))
+        .and_then(|text| PolicyFile::parse_repo(text).map_err(|error| error.to_string()))
     {
         Ok(parsed) => parsed,
         Err(reason) => {

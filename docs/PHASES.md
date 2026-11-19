@@ -222,18 +222,20 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 
 **Goal:** the only network path out of the sandbox. Adds crate `pks-proxy`.
 
-9.1. Host proxy on a Unix socket, with a relay inside the sandbox on loopback.
-9.2. HTTP CONNECT allowlist of exact `host:port`. Reject wildcards over shared cloud domains (`*.amazonaws.com`, `*.googleapis.com`, `*.blob.core.windows.net`).
-9.3. Proxy resolves DNS itself; refuses private, link-local and metadata addresses (`NET-PRIVATE-IP`).
-9.4. Unknown domains: hold 20 s and ask allow / always / deny (`NET-UNKNOWN-DOMAIN`); deny when headless.
-9.5. Optional `host_ports` relays, logged as NOTICE.
-9.6. Per-host upload byte counters (`NET-LARGE-UPLOAD` above 10 MB to a non-model-API host).
-9.7. Kiro profile with its exact domains, confirmed in monitor mode. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
+9.1. [x] Host proxy on a Unix socket, with a relay inside the sandbox on loopback (`pumpkin-shell sandbox-relay` on `127.0.0.1:3128`, started by `sandbox-init` before the seccomp filter).
+9.2. [x] HTTP CONNECT allowlist of exact `host:port`. Wildcards are refused by `HostPort::parse` (tests in `pks-core`) and in the user policy `[network]` (test `a_wildcard_endpoint_in_the_user_policy_is_an_error`). A repo policy cannot add endpoints (`parse_repo` refuses `[network]`).
+9.3. [x] Proxy resolves DNS itself, checks every resolved address, and dials the checked address. Refused: private, loopback, link-local, unspecified, multicast, documentation, CGNAT and metadata addresses (`addr.rs`, tests in `pks-proxy`).
+9.4. [x] Unknown hosts are held for `ASK_HOLD` (20 s) and asked through the `Asker`; no answer or "deny" is refused; monitor mode allows and reports `NET-UNKNOWN-DOMAIN`. The terminal prompt in `ide` is not yet tested on a live terminal.
+9.5. [ ] Not done: optional `host_ports` relays. The policy has no field for them yet, so nothing reads it. Decide before Phase 9 closes whether to add it now or move it to a later phase.
+9.6. [~] `NET-LARGE-UPLOAD` (WARN above 10 MB per connection, test `a_large_upload_raises_one_warning`). Limit: the count is per connection, not per host, and there is no exemption for model-API hosts yet.
+9.7. [ ] Kiro profile with its exact domains. Needs a signed-in Kiro run in monitor mode, which only the user can do. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
 
 **Done when:**
-- Kiro chat works through the proxy.
-- An unknown domain triggers the ask prompt.
-- A request to `169.254.169.254` or a LAN address is blocked.
+- [ ] Kiro chat works through the proxy. Blocked on 9.7 and on a signed-in Kiro.
+- [~] An unknown domain triggers the ask prompt. Covered by the engine tests with a fake asker. Not yet seen on a live terminal.
+- [x] A request to `169.254.169.254` is blocked: the sandbox probe `proxy refuses cloud metadata` gets `CONNECT tunnel failed, response 403` through the relay, and the direct probes show no route to it. A LAN address is refused by the engine test `an_ip_literal_on_a_private_address_is_refused_without_a_lookup`.
+
+Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pull request.
 
 ---
 

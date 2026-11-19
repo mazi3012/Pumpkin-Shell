@@ -12,6 +12,9 @@ use std::process::{Command, Output};
 
 use pks_sandbox::linux::LinuxBackend;
 use pks_sandbox::{IdeInstall, LaunchSpec, Roots, SandboxBackend};
+use std::os::unix::net::UnixListener;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -32,7 +35,7 @@ check "IDE home is writable" sh -c 'touch /home/sandbox/.pks-probe && rm /home/s
 check "/tmp is writable" sh -c 'touch /tmp/.pks-probe && rm /tmp/.pks-probe'
 check "running with no_new_privs" grep -q '^NoNewPrivs:[[:space:]]*1' /proc/self/status
 check "seccomp filter is installed" grep -q '^Seccomp:[[:space:]]*2' /proc/self/status
-check "environment is the allowlist" sh -c 'env | cut -d= -f1 | grep -vxE "HOME|USER|SHELL|PATH|LANG|TERM|DISPLAY|XAUTHORITY|PWD|SHLVL|OLDPWD|_" | grep -q . && exit 1; exit 0'
+check "environment is the allowlist" sh -c 'env | cut -d= -f1 | grep -vxE "HOME|USER|SHELL|PATH|LANG|TERM|DISPLAY|XAUTHORITY|PWD|SHLVL|OLDPWD|_|HTTP_PROXY|HTTPS_PROXY|http_proxy|https_proxy|NO_PROXY|no_proxy" | grep -q . && exit 1; exit 0'
 check "only the nested display socket is visible" sh -c 'test "$(ls /tmp/.X11-unix)" = "X${DISPLAY#:}"'
 check "nested display answers on its socket" sh -c 'test -S "/tmp/.X11-unix/X${DISPLAY#:}"'
 # What must be impossible inside the sandbox.
@@ -49,8 +52,9 @@ absent "host display :0 socket is not visible" test -e /tmp/.X11-unix/X0
 absent "/usr is not writable" touch /usr/pks-probe
 absent "/etc is not writable" touch /etc/pks-probe
 absent "the IDE install is not writable" touch /usr/bin/pks-probe
-absent "internet is unreachable (1.1.1.1)" curl -s -m 3 http://1.1.1.1/
-absent "cloud metadata is unreachable (169.254.169.254)" curl -s -m 3 http://169.254.169.254/
+absent "direct internet is unreachable (1.1.1.1, proxy bypassed)" curl --noproxy '*' -s -m 3 http://1.1.1.1/
+absent "direct cloud metadata is unreachable (proxy bypassed)" curl --noproxy '*' -s -m 3 http://169.254.169.254/
+check "proxy refuses cloud metadata (169.254.169.254)" sh -c 'curl -sv -m 5 https://169.254.169.254/ 2>&1 | grep -q "CONNECT tunnel failed, response 403"'
 check "only the loopback interface exists" awk 'NR>2 { sub(/:.*/, "", $1); if ($1 != "lo") exit 1 }' /proc/net/dev
 check "own PID namespace (few processes visible)" sh -c '[ "$(ls /proc | grep -c "^[0-9]")" -lt 10 ]'
 grep -q '^FAIL' "$out" && exit 1
@@ -82,6 +86,42 @@ struct Layout {
     ide_home: PathBuf,
     roots: Roots,
     canary: PathBuf,
+    proxy: PathBuf,
+    proxy_stop: Arc<AtomicBool>,
+}
+
+impl Drop for Layout {
+    fn drop(&mut self) {
+        self.proxy_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Starts a proxy on `socket` that allows nothing and refuses every ask.
+fn start_proxy(socket: &Path) -> Result<Arc<AtomicBool>, Box<dyn std::error::Error>> {
+    use pks_proxy::{Answer, Asker, Config, Engine, serve};
+    struct NoAnswers;
+    impl Asker for NoAnswers {
+        fn ask(&self, _: &pks_core::net::HostPort) -> Option<Answer> {
+            None
+        }
+    }
+    let listener = UnixListener::bind(socket)?;
+    let config = Config {
+        allow: std::collections::BTreeSet::new(),
+        mode: pks_core::policy::Mode::Enforce,
+        resolver: Arc::new(pks_proxy::SystemResolver),
+        dialer: Arc::new(pks_proxy::TcpDialer),
+        asker: Arc::new(NoAnswers),
+        events: Arc::new(|_| {}),
+        hold: std::time::Duration::from_secs(1),
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    std::thread::spawn(move || {
+        let _ = serve(listener, Arc::new(Engine::new(config)), flag);
+    });
+    Ok(stop)
 }
 
 impl Layout {
@@ -99,12 +139,16 @@ impl Layout {
         let canary = home.join("canary.txt");
         fs::write(&canary, "not a secret: a file the sandbox must not read\n")?;
         fs::write(data.join("keys-marker.txt"), "data directory marker\n")?;
+        let proxy = base.join("proxy.sock");
+        let proxy_stop = start_proxy(&proxy)?;
         Ok(Self {
             _root: root,
             repo,
             ide_home,
             roots: Roots { home, config, data },
             canary,
+            proxy,
+            proxy_stop,
         })
     }
 
@@ -129,6 +173,7 @@ impl Layout {
             ide_args: args,
             roots: self.roots.clone(),
             display_size: (800, 600),
+            proxy_socket: self.proxy.clone(),
         }
     }
 }
