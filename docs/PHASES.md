@@ -14,7 +14,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
-| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | blocked: Q4 (X11 approach, waiting for the user) |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | in-progress (code done; 1 of 3 Done-when items only partly met, see below) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | todo |
 | 8 | Linux `ide` backend | T6 | Linux | | todo |
@@ -140,11 +140,15 @@ Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 1
 5.5. Record every breakage and the minimum permission that fixed it in `docs/poc/linux-kiro.md`.
 
 **Done when:**
-- Kiro opens the repo and edits a file.
-- `cat ~/.ssh/*` from Kiro's terminal fails.
-- No network except the stub.
+- [ ] Kiro opens the repo and edits a file. **Partly met:** Kiro starts in the sandbox but stops at its Sign in screen (needs the Phase 12 broker). A file edit through the GUI was shown with VS Code, which has the same Code-OSS base, not with Kiro.
+- [x] `cat ~/.ssh/*` from the IDE's terminal fails (VS Code terminal; `--check` gives the same 23 passing probes for Kiro).
+- [x] No network except the stub: no network at all, no stub yet (Phase 9).
 
-**Blocked by:** Q4 (X11 approach). This machine has no Wayland.
+Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr`), 5.3 [x] (nested userns; `--disable-userns` makes Chromium abort), 5.4 [x] (no network), 5.5 [x] (`docs/poc/linux-kiro.md`).
+
+**Decision for the user:** accept Phase 5 as met with VS Code as the stand-in, or keep it open until Kiro can sign in (Phase 12, or a manual sign-in with temporary network access).
+
+**Blocked by:** none. Q4 was decided on 2026-11-19: Xephyr.
 
 ---
 
