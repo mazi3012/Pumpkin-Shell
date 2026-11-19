@@ -90,8 +90,11 @@ Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] CI runs on both runners
 3.9. Human output and `--json` output.
 
 **Done when:**
-- On this machine `doctor` passes the kernel, bwrap, userns and Landlock checks, warns about X11, and reports `SYS-IDE-TAMPERABLE` for `/usr/share/kiro` (unless 1.4 was applied).
-- Unit tests cover version parsing and each check's pass/fail mapping.
+- [x] On this machine `doctor` passes the kernel, bwrap, userns and Landlock checks, warns about X11, and reports `SYS-IDE-TAMPERABLE` for `/usr/share/kiro` (67 of 4916 files, checked 2026-11-20).
+- [x] Unit tests cover version parsing and each check's pass/fail mapping (10 unit tests in `doctor/checks.rs`).
+- [ ] Windows CI runs the new code (not yet pushed).
+
+Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x], 3.4 [x] (AppArmor sysctl read; fail path covered by unit test only), 3.5 [x] Landlock ABI v8, 3.6 [x] seccomp notify probe, 3.7 [x] X11 warning, 3.8 [x] `SYS-IDE-TAMPERABLE`, 3.9 [x] human and `--json`.
 
 ---
 
