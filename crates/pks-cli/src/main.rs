@@ -2,6 +2,8 @@
 
 mod doctor;
 
+mod scan;
+
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -22,11 +24,27 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+
+    /// Scan a repository for agent-escape setups.
+    Scan {
+        /// Path to the repository root (default: current directory).
+        #[arg(short, long, default_value = ".")]
+        path: String,
+
+        /// Print the report as JSON.
+        #[arg(long)]
+        json: bool,
+
+        /// CI mode: exit 0 if clean, 1 if findings, 2 on error.
+        #[arg(long)]
+        ci: bool,
+    },
 }
 
 fn main() -> ExitCode {
     match Cli::parse().command {
         Some(Command::Doctor { json }) => doctor::run(json),
+        Some(Command::Scan { path, json, ci }) => scan::run(&path, json, ci),
         None => ExitCode::SUCCESS,
     }
 }
