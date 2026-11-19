@@ -17,8 +17,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
-| 8 | Linux `ide` backend | T6 | Linux | | in-progress (code and tests done, local checks pass; Kiro reaches its sign-in screen; PR not yet open) |
-| 9 | Egress proxy | T7 | Both | | todo |
+| 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
+| 9 | Egress proxy | T7 | Both | | in-progress |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
