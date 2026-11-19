@@ -498,7 +498,7 @@ impl Rule for AlternateDataStreamRule {
         Severity::High
     }
 
-    fn check(&self, repo_root: &Path, rel_path: &str) -> Result<Option<Finding>, RuleError> {
+    fn check(&self, _repo_root: &Path, rel_path: &str) -> Result<Option<Finding>, RuleError> {
         // Check for alternate data streams (file:stream format)
         if rel_path.contains(':') {
             return Ok(Some(Finding {
