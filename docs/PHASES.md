@@ -16,8 +16,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
-| 7 | Policy and signed log | T5 | Both | | in-progress (code done, local checks pass; PR not yet open) |
-| 8 | Linux `ide` backend | T6 | Linux | | todo |
+| 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
+| 8 | Linux `ide` backend | T6 | Linux | | in-progress (starting from the verified Phase 5 flags) |
 | 9 | Egress proxy | T7 | Both | | todo |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
@@ -183,7 +183,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 **Done when:**
 - [x] Tests show `log verify` fails after editing, deleting, reordering or truncating any line: every field of every line, every line deleted, every pair swapped, every tail cut, a cut in the middle of a line, and a cut with the checkpoint also deleted (`pks-core` `log::tests`, and `pks-cli/tests/policy_log.rs` through the real binary).
 - [x] A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`: every rule and every lower action, the mode, and a user policy as the baseline (`policy::tests`, `policy_log.rs`).
-- [ ] CI is green on both runners. Needs the branch pushed and a PR.
+- [x] CI is green on both runners: PR #7 merged at `354478e`, `check (ubuntu-latest)` and `check (windows-latest)` passed.
 
 Steps: 7.1 [x] (`policy.rs`, version 1 schema), 7.2 [x] (`merge`, `resolve`; CLI `policy check`), 7.3 [x] (`trust`, pins in the host data dir, not in the repo), 7.4 [x] (ed25519 via `ed25519-dalek` 3.0.0, SHA-256 via `sha2` 0.11.1), 7.5 [x] (key in `<data dir>/keys`, mode 0700/0600, refused if looser or a symlink; "never visible to the sandbox" is enforced by the Phase 8 mounts, which must not include the data dir), 7.6 [x] (`log verify`).
 
