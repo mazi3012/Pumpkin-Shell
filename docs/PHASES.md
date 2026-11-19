@@ -13,12 +13,12 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3 optional, not installed; 1.4 applied 2026-11-20) |
 | 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
-| 4 | `scan` | T4 | Both | **v0.1** | in-progress |
-| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done |
-| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
-| 7 | Policy and signed log | T5 | Both | | in-progress |
-| 8 | Linux `ide` backend | T6 | Linux | | todo |
-| 9 | Egress proxy | T7 | Both | | todo |
+| 4 | `scan` | T4 | Both | **v0.1** | in-progress (PR #4 open, CI red; 2026-11-19 review found gaps) |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | in-progress (script and doc exist; Done-when not met: `~/.ssh` visible) |
+| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | skipped on purpose by the user (2026-11-19, see DECISIONS); needed before Phase 16 |
+| 7 | Policy and signed log | T5 | Both | | in-progress (hash chain only, no signatures; truncation not detected) |
+| 8 | Linux `ide` backend | T6 | Linux | | in-progress (code exists but `ide kiro` fails: bad bwrap args) |
+| 9 | Egress proxy | T7 | Both | | todo (no code on any branch) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
@@ -122,6 +122,18 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 
 **Note:** JSON config files such as `settings.json` allow comments (JSONC). Parse them with a JSONC-tolerant parser.
 
+
+**Review 2026-11-19 (PR #4, head b80f393), checked by running the binary:**
+- [x] Clean repo gives no finding. `WS-HIDDEN-UNICODE` fires on tag chars, zero-width and bidi. `YARNPATH`, `FOLDEROPEN-TASK` and Kiro command hooks (real `.kiro/hooks` shape) fire.
+- [ ] MCP `autoApprove: ["*"]` under `mcpServers.<name>` is missed. The rule only checks the top level; Kiro docs put it per server.
+- [ ] `.vscode/settings.json` with comments aborts the scan (exit 2). `serde_json` is used, not a JSONC parser (see Note).
+- [ ] `.git/config` and `.git/hooks` rules never fire: the walker skips `.git` (step 4.8).
+- [ ] One non-UTF-8 file aborts the whole scan (exit 2), which lets a binary file hide a malicious one.
+- [ ] `.gitignore` is not respected (step 4.1 asks for it). The `ignore` crate was not used.
+- [ ] No fixture repos under `tests/fixtures/scan/` (step 4.11). Only 3 unit tests in `pks-scan`.
+- [ ] Rule IDs `FOLDEROPEN-TASK`, `YARNPATH`, `KIRO-COMMAND-HOOK` are not in the PRD rule list.
+- [ ] PR #4 CI: `check (ubuntu-latest)` and `check (windows-latest)` both failed.
+
 ---
 
 ## Phase 5: Linux PoC: Kiro in bwrap
@@ -140,6 +152,14 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 - No network except the stub.
 
 **Blocked by:** Q4 (X11 approach). This machine has no Wayland.
+
+
+**Review 2026-11-19 (PR #4), checked on this machine:**
+- [ ] `~/.ssh` is visible inside the sandbox. The script's flags (`--ro-bind / /`) expose the real home. A canary file in `$HOME` was readable. With `--tmpfs $HOME` it was not.
+- [ ] The script uses `--env` and `--unset-env`. bwrap 0.9.0 has `--setenv` and `--unsetenv` only; `--unset-env` is rejected ("Unknown option").
+- [ ] Host `/tmp` is bound read-write. The raw X11 socket is exposed (Q4 not resolved; the doc picks "opt-in" with no opt-in switch).
+- [ ] `docs/poc/linux-kiro.md` marks "SSH socket blocked" as verified. The evidence is an unset env var, not a test.
+- [ ] Kiro was not launched and no file edit was shown.
 
 ---
 
@@ -175,6 +195,15 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 - Tests show `log verify` fails after editing, deleting, reordering or truncating any line.
 - A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`.
 
+
+**Review 2026-11-19 (PR #4), checked by running the binary:**
+- [x] `log verify` fails after editing, deleting or reordering a line.
+- [ ] `log verify` passes after the last line is truncated. `log checkpoint` writes a file that `verify` never reads.
+- [ ] No signatures. There is no `ed25519-dalek` dependency; the `sig` field in the doc comment is never written. Anyone can edit an entry and recompute the chain (steps 7.4, 7.5).
+- [x] `policy trust` and `policy verify` work; a changed policy fails with `POL-UNTRUSTED`.
+- [ ] The tighten-only merge exists with 3 unit tests but no CLI path calls it, and there is no `pumpkin-shell.toml` loading (step 7.2).
+- [ ] `scripts/poc/windows-kiro.ps1` (347 lines) was added with this phase. It belongs to Phase 6, and was not run (no Windows machine).
+
 ---
 
 ## Phase 8: Linux `ide` backend
@@ -191,6 +220,15 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 **Done when:**
 - `pumpkin-shell ide kiro .` opens Kiro on this repo.
 - `~/.ssh`, `SSH_AUTH_SOCK` and the D-Bus session bus are unreachable from Kiro's terminal.
+
+
+**Review 2026-11-19 (PR #4), checked on this machine:**
+- [ ] `pumpkin-shell ide kiro` fails at once: `bwrap: execvp /tmp: No such file or directory`. `--ro-bind /` and `--bind /tmp` each get one path, not two.
+- [ ] Even when fixed, it would start `/bin/bash`, not Kiro.
+- [ ] The IDE install is bound with `--bind` (read-write); the PRD requires read-only.
+- [ ] Same `--env` / `--unset-env` flag names that bwrap rejects, and the same home-exposure problem as Phase 5.
+- [ ] `apply_security_layers` is an empty stub (Landlock and seccomp, step 8.4), and `ide.rs` only prints a warning if it fails. This is a placeholder and breaks the no-dead-code rule.
+- [ ] `clippy -D warnings` fails (`unused_mut`, `new_without_default`). `cargo deny` fails: `pks-policy` and `pks-sandbox` have no license field.
 
 ---
 
@@ -210,6 +248,9 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 - Kiro chat works through the proxy.
 - An unknown domain triggers the ask prompt.
 - A request to `169.254.169.254` or a LAN address is blocked.
+
+
+**Review 2026-11-19:** no Phase 9 code exists on `phase-4-scan`, `main` or any other remote branch. Nothing to test yet.
 
 ---
 
