@@ -82,6 +82,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-20 | **Ask prompt test.** The terminal answer parser was moved into `prompt_on(input, output, endpoint)` so tests can drive it with byte slices. A pseudo-terminal harness ran `pumpkin-shell ide kiro` with an enforce policy for 240 s: Kiro did not contact an unlisted host, so no prompt was shown and the live prompt is still untested. The engine (asker, 20 s hold, deny) is tested with fake askers | Honest status: the live prompt needs a run in which Kiro contacts an unlisted host |
 
+| 2026-11-20 | **Open note: Kiro Extensions are blocked.** Kiro's vendor page lists `open-vsx.org` and `openvsx.eclipsecontent.org` for Extensions (an optional feature). They are not on our allowlist, so the Marketplace shows "Unable to search" (observed in a live session). User decision: keep the policy as it is for now, and revisit when extensions are needed | Live run; user decision |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |

@@ -18,8 +18,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
-| 9 | Egress proxy | T7 | Both | | in-progress (code complete, branch `phase-9-egress-proxy`; PR not opened, push blocked) |
-| 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
+| 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
+| 10 | Workspace integrity (Linux) | T8 | Linux | | in-progress (branch `phase-10-workspace-integrity`) |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
 | 13 | Code-OSS adapter, four IDEs | T11 | Linux | **Linux v0.5** | todo |
@@ -219,6 +219,8 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 ---
 
 ## Phase 9: Egress proxy
+
+**Status: done.** Merged as PR #9 (f8ce48c). Open note carried forward: Kiro Extensions need `open-vsx.org` and `openvsx.eclipsecontent.org`, which are not in the allowlist (see DECISIONS.md).
 
 **Goal:** the only network path out of the sandbox. Adds crate `pks-proxy`.
 
