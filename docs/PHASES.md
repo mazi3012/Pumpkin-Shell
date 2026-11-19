@@ -13,8 +13,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3 optional, not installed; 1.4 applied 2026-11-20) |
 | 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
-| 4 | `scan` | T4 | Both | **v0.1** | in-progress |
-| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
+| 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | blocked: Q4 (X11 approach, waiting for the user) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | todo |
 | 8 | Linux `ide` backend | T6 | Linux | | todo |
@@ -119,9 +119,9 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 **Done when:**
 - [x] Every fixture produces exactly its expected finding; the clean repo produces none (`crates/pks-scan/tests/fixtures.rs`, 23 tests; run 2026-11-19).
 - [x] `pumpkin-shell scan --ci` exits 1 on the hidden-Unicode fixture (`crates/pks-cli/tests/scan.rs`, 10 tests) and the CI workflow has a step that fails unless that exit code is 1 (PRD scenario 11).
-- [ ] CI is green on both runners. Needs the branch pushed. The Windows ADS tests (`WS-ADS`) run only there.
+- [x] CI is green on both runners: `check (ubuntu-latest)` and `check (windows-latest)` passed on PR #5 and again on `main` at 34e12c6. The Windows ADS tests ran there for the first time.
 
-Steps: 4.0 [x], 4.1 [x] (`ignore` crate; `--no-ignore` for CI), 4.2 [x], 4.3 [x] (`settings.json` in `.vscode`, `.cursor`, `.windsurf`; MCP in `.kiro/settings`, `.mcp.json`, `.cursor`, `.vscode`), 4.4 [x] (rule `WS-MCP-SERVER`), 4.5 [x] (rule `WS-KIRO-HOOK`), 4.6 [x], 4.7 [x], 4.8 [x], 4.9 [x] (compiled and linted for Windows here, not run), 4.10 [x], 4.11 [x] (`ws-ads` has no fixture directory: an alternate stream cannot be stored in git, so its test creates one at run time), 4.12 [ ] not done: tagging **v0.1** needs your OK after the merge, and Linux and Windows binaries need a release workflow that does not exist yet.
+Steps: 4.0 [x], 4.1 [x] (`ignore` crate; `--no-ignore` for CI), 4.2 [x], 4.3 [x] (`settings.json` in `.vscode`, `.cursor`, `.windsurf`; MCP in `.kiro/settings`, `.mcp.json`, `.cursor`, `.vscode`), 4.4 [x] (rule `WS-MCP-SERVER`), 4.5 [x] (rule `WS-KIRO-HOOK`), 4.6 [x], 4.7 [x], 4.8 [x], 4.9 [x] (ran green on the Windows runner), 4.10 [x], 4.11 [x] (`ws-ads` has no fixture directory: an alternate stream cannot be stored in git, so its test creates one at run time), 4.12 [ ] not done: tagging **v0.1** needs your OK after the merge, and Linux and Windows binaries need a release workflow that does not exist yet.
 
 Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 11 unit + 4 + 10). Two protections were broken on purpose to confirm the tests fail (reading `.ignore` files, matching `.kiro/hooks` by string prefix).
 
