@@ -42,11 +42,7 @@ pub fn run(path: &str, json: bool, ci: bool) -> ExitCode {
         }
         Err(error) => {
             eprintln!("scan: {error}");
-            if ci {
-                ExitCode::from(2)
-            } else {
-                ExitCode::from(2)
-            }
+            ExitCode::from(2)
         }
     }
 }

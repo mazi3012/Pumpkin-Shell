@@ -230,30 +230,29 @@ impl Rule for McpServerInventoryRule {
         let content = fs::read_to_string(&file_path)?;
         let value: Value = serde_json::from_str(&content)?;
 
-        if let Some(obj) = value.as_object() {
-            if let Some(servers) = obj.get("servers") {
-                if let Some(arr) = servers.as_array() {
-                    let server_names: Vec<String> = arr
-                        .iter()
-                        .filter_map(|s| {
-                            s.get("name")
-                                .and_then(|n| n.as_str().map(|s| s.to_string()))
-                        })
-                        .collect();
+        if let Some(obj) = value.as_object()
+            && let Some(servers) = obj.get("servers")
+            && let Some(arr) = servers.as_array()
+        {
+            let server_names: Vec<String> = arr
+                .iter()
+                .filter_map(|s| {
+                    s.get("name")
+                        .and_then(|n| n.as_str().map(|s| s.to_string()))
+                })
+                .collect();
 
-                    if !server_names.is_empty() {
-                        return Ok(Some(Finding {
-                            rule: self.rule_id(),
-                            severity: self.severity(),
-                            target: rel_path.to_string(),
-                            message: format!("MCP servers configured: {}", server_names.join(", ")),
-                            fix: format!(
-                                "Review MCP servers in {}: ensure only trusted servers are configured",
-                                rel_path
-                            ),
-                        }));
-                    }
-                }
+            if !server_names.is_empty() {
+                return Ok(Some(Finding {
+                    rule: self.rule_id(),
+                    severity: self.severity(),
+                    target: rel_path.to_string(),
+                    message: format!("MCP servers configured: {}", server_names.join(", ")),
+                    fix: format!(
+                        "Review MCP servers in {}: ensure only trusted servers are configured",
+                        rel_path
+                    ),
+                }));
             }
         }
 
@@ -287,38 +286,30 @@ impl Rule for KiroCommandHookRule {
         let content = fs::read_to_string(&file_path)?;
         let value: Value = serde_json::from_str(&content)?;
 
-        if let Some(obj) = value.as_object() {
-            if let Some(hooks) = obj.get("hooks") {
-                if let Some(arr) = hooks.as_array() {
-                    for hook in arr {
-                        if let Some(action) = hook.get("action") {
-                            if let Some(action_obj) = action.as_object() {
-                                if let Some(action_type) =
-                                    action_obj.get("type").and_then(|t| t.as_str())
-                                {
-                                    if action_type == "command" {
-                                        let hook_name = hook
-                                            .get("name")
-                                            .and_then(|n| n.as_str())
-                                            .unwrap_or("unnamed");
-                                        return Ok(Some(Finding {
-                                            rule: self.rule_id(),
-                                            severity: self.severity(),
-                                            target: rel_path.to_string(),
-                                            message: format!(
-                                                "Kiro command hook detected: {}",
-                                                hook_name
-                                            ),
-                                            fix: format!(
-                                                "Review command hooks in {}: remove any hooks that run untrusted commands",
-                                                rel_path
-                                            ),
-                                        }));
-                                    }
-                                }
-                            }
-                        }
-                    }
+        if let Some(obj) = value.as_object()
+            && let Some(hooks) = obj.get("hooks")
+            && let Some(arr) = hooks.as_array()
+        {
+            for hook in arr {
+                if let Some(action) = hook.get("action")
+                    && let Some(action_obj) = action.as_object()
+                    && let Some(action_type) = action_obj.get("type").and_then(|t| t.as_str())
+                    && action_type == "command"
+                {
+                    let hook_name = hook
+                        .get("name")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("unnamed");
+                    return Ok(Some(Finding {
+                        rule: self.rule_id(),
+                        severity: self.severity(),
+                        target: rel_path.to_string(),
+                        message: format!("Kiro command hook detected: {}", hook_name),
+                        fix: format!(
+                            "Review command hooks in {}: remove any hooks that run untrusted commands",
+                            rel_path
+                        ),
+                    }));
                 }
             }
         }
@@ -359,34 +350,29 @@ impl Rule for FolderOpenTaskRule {
         let content = fs::read_to_string(&file_path)?;
         let value: Value = serde_json::from_str(&content)?;
 
-        if let Some(obj) = value.as_object() {
-            if let Some(tasks) = obj.get("tasks") {
-                if let Some(arr) = tasks.as_array() {
-                    for task in arr {
-                        if let Some(run_options) = task.get("runOptions") {
-                            if let Some(run_on) = run_options.get("runOn") {
-                                if *run_on == Value::String("folderOpen".to_string()) {
-                                    let task_name = task
-                                        .get("label")
-                                        .and_then(|l| l.as_str())
-                                        .unwrap_or("unnamed");
-                                    return Ok(Some(Finding {
-                                        rule: self.rule_id(),
-                                        severity: self.severity(),
-                                        target: format!("{} (task: {})", rel_path, task_name),
-                                        message: format!(
-                                            "Folder-open task detected: {}",
-                                            task_name
-                                        ),
-                                        fix: format!(
-                                            "Review folder-open task '{}' in {}: ensure it doesn't run untrusted code",
-                                            task_name, rel_path
-                                        ),
-                                    }));
-                                }
-                            }
-                        }
-                    }
+        if let Some(obj) = value.as_object()
+            && let Some(tasks) = obj.get("tasks")
+            && let Some(arr) = tasks.as_array()
+        {
+            for task in arr {
+                if let Some(run_options) = task.get("runOptions")
+                    && let Some(run_on) = run_options.get("runOn")
+                    && *run_on == Value::String("folderOpen".to_string())
+                {
+                    let task_name = task
+                        .get("label")
+                        .and_then(|l| l.as_str())
+                        .unwrap_or("unnamed");
+                    return Ok(Some(Finding {
+                        rule: self.rule_id(),
+                        severity: self.severity(),
+                        target: format!("{} (task: {})", rel_path, task_name),
+                        message: format!("Folder-open task detected: {}", task_name),
+                        fix: format!(
+                            "Review folder-open task '{}' in {}: ensure it doesn't run untrusted code",
+                            task_name, rel_path
+                        ),
+                    }));
                 }
             }
         }
