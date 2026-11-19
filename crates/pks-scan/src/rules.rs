@@ -524,7 +524,7 @@ pub struct RuleProvider;
 impl RuleProvider {
     /// Returns a list of all detection rules.
     pub fn all() -> Vec<Box<dyn Rule>> {
-        let rules: Vec<Box<dyn Rule>> = vec![
+        let mut rules: Vec<Box<dyn Rule>> = vec![
             Box::new(HiddenUnicodeRule),
             Box::new(AutoApproveRule),
             Box::new(McpServerInventoryRule),
