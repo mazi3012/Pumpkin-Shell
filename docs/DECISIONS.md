@@ -51,6 +51,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-19 | **How to test Kiro itself.** Kiro IDE sign-in uses `redirect_uri=http://localhost:3128` and a listener on `127.0.0.1:3128` inside the sandbox (observed with a stub `xdg-open`, nothing opened). A real Kiro test needs (1) the Phase 9 proxy for the token exchange and (2) a callback relay from the host's port 3128 into the sandbox (Phase 12). Until then Phase 5 shows Kiro starting, its sign-in screen, and the same sandbox editing files with VS Code. PRD acceptance scenario 2 (Kiro sign-in) is the Kiro test | Observed 2026-11-19; the user's click on Sign in produced the captured link |
 
+| 2026-11-19 | **Phase 5 accepted with a VS Code stand-in.** The "Kiro edits a file" item was shown with VS Code 1.146.0 in the same sandbox, not with Kiro. The Kiro-specific test moves to PRD scenario 2 after Phases 9 and 12 | User decision: "yes accept phase 5" |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |
