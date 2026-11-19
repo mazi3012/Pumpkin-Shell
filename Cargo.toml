@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pks-core", "crates/pks-scan", "crates/pks-cli"]
+members = ["crates/pks-core", "crates/pks-scan", "crates/pks-sandbox", "crates/pks-cli"]
 
 [workspace.package]
 version = "0.0.0"
@@ -31,6 +31,10 @@ jsonc-parser = { version = "0.34.0", features = ["serde"] }
 landlock = "0.4.7"
 libc = "0.2.191"
 serde = { version = "1.0.229", features = ["derive"] }
+# Phase 8 additions checked 2026-11-19: seccompiler 0.5.0 (2025-03-07 release,
+# last commit 2026-07-27, Apache-2.0 OR BSD-3-Clause, not yanked). Used for the
+# TIOCSTI seccomp filter only.
+seccompiler = "0.5.0"
 serde_json = "1.0.154"
 sha2 = "0.11.1"
 tempfile = "3.27.0"

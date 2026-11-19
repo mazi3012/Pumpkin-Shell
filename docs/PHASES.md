@@ -16,8 +16,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
-| 7 | Policy and signed log | T5 | Both | | in-progress (code done, local checks pass; PR not yet open) |
-| 8 | Linux `ide` backend | T6 | Linux | | todo |
+| 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
+| 8 | Linux `ide` backend | T6 | Linux | | in-progress (code and tests done, local checks pass; Kiro reaches its sign-in screen; PR not yet open) |
 | 9 | Egress proxy | T7 | Both | | todo |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
@@ -183,7 +183,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 **Done when:**
 - [x] Tests show `log verify` fails after editing, deleting, reordering or truncating any line: every field of every line, every line deleted, every pair swapped, every tail cut, a cut in the middle of a line, and a cut with the checkpoint also deleted (`pks-core` `log::tests`, and `pks-cli/tests/policy_log.rs` through the real binary).
 - [x] A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`: every rule and every lower action, the mode, and a user policy as the baseline (`policy::tests`, `policy_log.rs`).
-- [ ] CI is green on both runners. Needs the branch pushed and a PR.
+- [x] CI is green on both runners: PR #7 merged at `354478e`, `check (ubuntu-latest)` and `check (windows-latest)` passed.
 
 Steps: 7.1 [x] (`policy.rs`, version 1 schema), 7.2 [x] (`merge`, `resolve`; CLI `policy check`), 7.3 [x] (`trust`, pins in the host data dir, not in the repo), 7.4 [x] (ed25519 via `ed25519-dalek` 3.0.0, SHA-256 via `sha2` 0.11.1), 7.5 [x] (key in `<data dir>/keys`, mode 0700/0600, refused if looser or a symlink; "never visible to the sandbox" is enforced by the Phase 8 mounts, which must not include the data dir), 7.6 [x] (`log verify`).
 
@@ -199,17 +199,23 @@ Not done on purpose: a writer that reopens a closed or crashed session (`Logger`
 
 **Goal:** `pumpkin-shell ide kiro .` launches Kiro in the sandbox from Rust, using what Phase 5 learned.
 
-8.0. Create crate `pks-sandbox` with the `SandboxBackend` trait and its Linux implementation behind `#[cfg(target_os = "linux")]`. The Windows implementation is added in Phase 16.
-8.1. Implement `SandboxBackend` for Linux: build the bwrap argument vector (never a shell string).
-8.2. Read-only root including the IDE install, read-write repo, persistent per-IDE home.
-8.3. Filtered environment. Not passed in: `SSH_AUTH_SOCK`, D-Bus session bus, `docker.sock`, `/run/user/$UID`.
-8.4. Landlock as a second layer; seccomp filter blocking `TIOCSTI`.
-8.5. No network yet (Phase 9 adds the proxy).
+8.0 [x]. Create crate `pks-sandbox` with the `SandboxBackend` trait and its Linux implementation behind `#[cfg(target_os = "linux")]`. The Windows implementation is added in Phase 16.
+8.1 [x] (`linux/bwrap.rs`, tested) Implement `SandboxBackend` for Linux: build the bwrap argument vector (never a shell string).
+8.2 [x] (read-only `/usr`, read-write repo and IDE home, tested) Read-only root including the IDE install, read-write repo, persistent per-IDE home.
+8.3 [x] (`--clearenv` plus an exact allowlist, tested) Filtered environment. Not passed in: `SSH_AUTH_SOCK`, D-Bus session bus, `docker.sock`, `/run/user/$UID`.
+8.4 [x] (Landlock ABI 1 required, newer rights best-effort; seccomp blocks TIOCSTI with EPERM; tested) Landlock as a second layer; seccomp filter blocking `TIOCSTI`.
+8.5 [x] (`--unshare-all`, loopback only, no proxy yet) No network yet (Phase 9 adds the proxy).
 
 **Done when:**
-- `pumpkin-shell ide kiro .` opens Kiro on this repo.
-- `~/.ssh`, `SSH_AUTH_SOCK` and the D-Bus session bus are unreachable from Kiro's terminal.
+- [~] `pumpkin-shell ide kiro .` opens Kiro on this repo. **Partly met:** `pumpkin-shell ide kiro` starts Kiro in the sandbox on a nested display and Kiro shows its Sign in screen (screenshot). It stops there, as in Phase 5, because sign-in needs Phases 9 and 12. The repo is mounted at `/workspace`; the repo open itself is not visible until sign-in.
+- [~] `~/.ssh`, `SSH_AUTH_SOCK` and the D-Bus session bus are unreachable from Kiro's terminal. **Verified with the same sandbox and IDE binary, not Kiro's terminal:** the 26 isolation probes in `tests/sandbox.rs` run inside the real sandbox and pass. Kiro's own terminal was not driven.
 
+
+Tests: pks-sandbox 23 unit tests (spec refusals, bwrap argument list, display lookup); pks-cli `tests/sandbox.rs`, 8 tests that run real sandboxes: 26 isolation probes, a failing probe reported, Landlock write allow and deny, TIOCSTI EPERM and other ioctls unaffected, two refusal paths. Mutation checks: skipping seccomp, skipping Landlock, dropping `--unshare-all` and sharing the network each fail at least one test.
+
+Found and fixed while testing: Chromium's setuid check failed under Landlock until `/proc` was writable (it writes `uid_map` for the namespaces it creates). The sandbox's `/proc` lists only its own processes, so the write reaches no host process (see DECISIONS).
+
+Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path but untested. No GPU device (`/dev/dri`), no Wayland.
 ---
 
 ## Phase 9: Egress proxy

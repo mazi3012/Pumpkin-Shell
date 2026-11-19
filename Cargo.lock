@@ -442,6 +442,7 @@ dependencies = [
  "landlock",
  "libc",
  "pks-core",
+ "pks-sandbox",
  "pks-scan",
  "serde",
  "serde_json",
@@ -460,6 +461,18 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "pks-sandbox"
+version = "0.0.0"
+dependencies = [
+ "getrandom",
+ "landlock",
+ "libc",
+ "seccompiler",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -546,6 +559,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
+]
+
+[[package]]
+name = "seccompiler"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4ae55de56877481d112a559bbc12667635fdaf5e005712fd4e2b2fa50ffc884"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

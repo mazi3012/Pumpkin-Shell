@@ -1,10 +1,12 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
 mod doctor;
+mod ide;
 mod log;
 mod policy;
 mod scan;
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -45,6 +47,28 @@ enum Command {
         /// .gitignore can otherwise hide tracked files from the scan.
         #[arg(long)]
         no_ignore: bool,
+    },
+    /// Open a repository in an IDE that runs inside the sandbox.
+    Ide {
+        /// The IDE to start.
+        #[arg(value_enum)]
+        ide: ide::Ide,
+        /// Repository to open.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Internal: the step inside the sandbox that applies Landlock and seccomp, then runs the IDE.
+    #[command(hide = true)]
+    SandboxInit {
+        /// Path that may be written (repeatable).
+        #[arg(long = "rw")]
+        rw: Vec<PathBuf>,
+        /// Path that may only be read (repeatable).
+        #[arg(long = "ro")]
+        ro: Vec<PathBuf>,
+        /// The program to run after the restrictions are applied.
+        #[arg(last = true, required = true, num_args = 1..)]
+        command: Vec<OsString>,
     },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
     Trust {
@@ -118,6 +142,8 @@ fn main() -> ExitCode {
             fail_on,
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
+        Some(Command::Ide { ide, path }) => ide::run(ide, &path),
+        Some(Command::SandboxInit { rw, ro, command }) => ide::sandbox_init(&rw, &ro, &command),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

@@ -66,3 +66,11 @@ Probe the real capability; don't infer it from files that may not exist.
 | seccomp user notification | Call `seccomp(SECCOMP_GET_ACTION_AVAIL, 0, SECCOMP_RET_USER_NOTIF)`; success means supported |
 | Display | `WAYLAND_DISPLAY` / `DISPLAY` / `XDG_SESSION_TYPE` |
 | IDE install | Walk the install dir (Kiro: `/usr/share/kiro`) for files writable by group/other or not owned by root → `SYS-IDE-TAMPERABLE` |
+
+## Phase 8 implementation (verified 2026-11-19)
+- Backend: `crates/pks-sandbox/src/linux/` (bwrap argument list, Xephyr display, in-sandbox step). CLI: `pumpkin-shell ide kiro|code [PATH]`.
+- The in-sandbox step is `pumpkin-shell sandbox-init --rw ... --ro ... -- <ide> <args>`. It applies Landlock, then a seccomp filter that returns EPERM for TIOCSTI, then execs the IDE.
+- Landlock write paths: the repo, the IDE home, `/tmp`, `/dev`, `/run`, `/proc`, and the nested display socket. `/proc` is writable because Chromium writes `uid_map` for the namespaces it creates; it is the sandbox's own procfs.
+- Read paths: `/usr`, `/etc`, `/sys`, the init binary and the Xauthority file.
+- Chromium keeps its own sandbox: `--no-sandbox` is never passed, and nested user namespaces stay enabled.
+

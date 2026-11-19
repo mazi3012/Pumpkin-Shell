@@ -30,6 +30,33 @@ jobs:
         with:
           tool: cargo-deny@0.21.0,cargo-audit@0.23.0
 
+      # The sandbox tests run real bubblewrap, Xephyr and xauth (Linux only).
+      # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor, so
+      # the runner allows them. Both steps are Linux-only.
+      - name: Install sandbox tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap xserver-xephyr xvfb xauth x11-utils curl python3
+      - name: Allow unprivileged user namespaces (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Xephyr is a nested server and needs a host X display. A headless runner
+      # has none, so start a virtual one (Xvfb) for the test steps.
+      - name: Start a virtual X display (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          nohup Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > /tmp/xvfb.log 2>&1 &
+          for i in $(seq 1 20); do DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && break; sleep 0.5; done
+          DISPLAY=:99 xdpyinfo >/dev/null && echo "DISPLAY=:99" >> "$GITHUB_ENV" && echo "virtual display :99 ready"
+      - name: Show sandbox prerequisites (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          echo "kernel: $(uname -r)"
+          echo "lsm: $(cat /sys/kernel/security/lsm 2>/dev/null || echo unreadable)"
+          echo "apparmor_restrict_unprivileged_userns: $(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)"
+          echo "bwrap: $(bwrap --version 2>&1)"
+          echo "Xephyr: $(command -v Xephyr || echo missing)"
+          echo "xauth: $(command -v xauth || echo missing)"
+          bwrap --unshare-user --ro-bind / / true && echo "bwrap userns probe: ok" || echo "bwrap userns probe: FAILED"
       - name: Format
         run: cargo fmt --all --check
 
