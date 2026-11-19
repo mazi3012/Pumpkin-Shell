@@ -14,6 +14,7 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 pks-core = { path = "../pks-core", version = "0.0.0" }
+pks-scan = { path = "../pks-scan", version = "0.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 
@@ -24,3 +25,6 @@ libc.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

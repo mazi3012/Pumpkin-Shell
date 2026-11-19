@@ -164,6 +164,12 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 | WS-AUTOAPPROVE (`chat.tools.autoApprove`, MCP `autoApprove: ["*"]`, new MCP server, new Kiro command hook) | CRITICAL; staged, pause |
 | WS-HIDDEN-UNICODE (tag chars U+E0000–E007F, bidi controls, zero-width) | HIGH |
 | WS-WATCHED-CHANGE | HIGH; shown in review |
+| WS-MCP-SERVER (static `scan`: an MCP server is configured; inventory only) | NOTICE |
+| WS-KIRO-HOOK (static `scan`: a Kiro hook runs a shell command) | WARN |
+| WS-FOLDER-OPEN-TASK (`.vscode/tasks.json` task with `runOn: folderOpen`) | HIGH |
+| WS-YARNPATH (`.yarnrc.yml` sets `yarnPath`) | HIGH |
+| WS-GIT-HOOK (`core.hooksPath`, `core.fsmonitor` program, config `include`, or an executable file in `.git/hooks`) | HIGH |
+| WS-ADS (Windows: NTFS alternate data stream on a file or directory) | HIGH |
 | WS-SECRET-WRITTEN | HIGH |
 | WS-MASS-DELETE (>50 files or >20% of tracked files) | HIGH; restore hint |
 | EXEC-AGENT-YOLO (AI CLI with skip-permission flags from a non-interactive parent) | CRITICAL |

@@ -1,0 +1,5 @@
+// JSONC: comments and trailing commas are legal
+{
+  "editor.tabSize": 2,
+  "chat.tools.autoApprove": false, // off
+}
