@@ -14,9 +14,9 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
-| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | in-progress (accepted by the user 2026-11-19 with a VS Code stand-in; PR not yet open) |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
-| 7 | Policy and signed log | T5 | Both | | todo |
+| 7 | Policy and signed log | T5 | Both | | in-progress |
 | 8 | Linux `ide` backend | T6 | Linux | | todo |
 | 9 | Egress proxy | T7 | Both | | todo |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
