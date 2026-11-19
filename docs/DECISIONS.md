@@ -80,6 +80,8 @@ Record every product or architecture decision here with a date. Never delete ent
 | 2026-11-20 | **host_ports relays (PHASES 9.5).** Set only in the user's policy (`[network] host_ports`). The in-sandbox relay listens on `127.0.0.1:<port>` for each port, sends `CONNECT 127.0.0.1:<port>` to the proxy, then copies bytes. The proxy dials exactly `127.0.0.1:<port>` for a listed port and nowhere else; `localhost` and other loopback addresses keep the normal refusal. Each relayed connection raises `NET-HOST-PORT` (NOTICE, added to PRD FR-DET and steering). Port 0 and 3128 are refused by the policy and again by `spec::check`. A repo policy cannot set host ports | PRD FR-NET and scenario 7; test-first, real sandbox test |
 | 2026-11-20 | **host_ports known limits:** (1) a listed port is reachable by the IDE with no further check: listing 22 gives the IDE the host's sshd, so the user must list only services they want reachable; (2) relayed traffic counts toward NET-LARGE-UPLOAD like any other connection; (3) the relay process inherits the sandbox layers, the same as the proxy relay | Honest limits |
 
+| 2026-11-20 | **Ask prompt test.** The terminal answer parser was moved into `prompt_on(input, output, endpoint)` so tests can drive it with byte slices. A pseudo-terminal harness ran `pumpkin-shell ide kiro` with an enforce policy for 240 s: Kiro did not contact an unlisted host, so no prompt was shown and the live prompt is still untested. The engine (asker, 20 s hold, deny) is tested with fake askers | Honest status: the live prompt needs a run in which Kiro contacts an unlisted host |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |

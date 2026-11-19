@@ -273,21 +273,75 @@ struct TerminalAsker;
 #[cfg(target_os = "linux")]
 impl pks_proxy::Asker for TerminalAsker {
     fn ask(&self, endpoint: &pks_core::net::HostPort) -> Option<pks_proxy::Answer> {
-        use std::io::{BufRead, IsTerminal, Write};
+        use std::io::IsTerminal;
         if !std::io::stdin().is_terminal() {
             return None;
         }
-        eprint!(
-            "ide: allow connection to {endpoint}? [o]nce / [s]ession / [d]eny (default deny, 20 s): "
-        );
-        let _ = std::io::stderr().flush();
-        let mut line = String::new();
-        std::io::stdin().lock().read_line(&mut line).ok()?;
-        match line.trim().to_ascii_lowercase().as_str() {
-            "o" | "once" => Some(pks_proxy::Answer::AllowOnce),
-            "s" | "session" => Some(pks_proxy::Answer::AllowSession),
-            _ => Some(pks_proxy::Answer::Deny),
-        }
+        prompt_on(std::io::stdin().lock(), std::io::stderr(), endpoint)
+    }
+}
+
+/// Writes the question to `output` and reads one line from `input`. Any
+/// answer other than "o", "once", "s" or "session" (including an empty line
+/// or end of input) is a deny: the connection fails closed. `None` only when
+/// the input cannot be read at all.
+#[cfg(target_os = "linux")]
+fn prompt_on<R: std::io::BufRead, W: std::io::Write>(
+    mut input: R,
+    mut output: W,
+    endpoint: &pks_core::net::HostPort,
+) -> Option<pks_proxy::Answer> {
+    let _ = write!(
+        output,
+        "ide: allow connection to {endpoint}? [o]nce / [s]ession / [d]eny (default deny, 20 s): "
+    );
+    let _ = output.flush();
+    let mut line = String::new();
+    input.read_line(&mut line).ok()?;
+    match line.trim().to_ascii_lowercase().as_str() {
+        "o" | "once" => Some(pks_proxy::Answer::AllowOnce),
+        "s" | "session" => Some(pks_proxy::Answer::AllowSession),
+        _ => Some(pks_proxy::Answer::Deny),
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::*;
+    use pks_proxy::Answer;
+
+    fn endpoint() -> pks_core::net::HostPort {
+        pks_core::net::HostPort::parse("unknown.example.org:443").unwrap_or_else(|e| panic!("{e}"))
+    }
+
+    fn answer(line: &str) -> Option<Answer> {
+        let mut output = Vec::new();
+        prompt_on(line.as_bytes(), &mut output, &endpoint())
+    }
+
+    #[test]
+    fn once_and_session_allow_and_everything_else_denies() {
+        assert_eq!(answer("o\n"), Some(Answer::AllowOnce));
+        assert_eq!(answer("once\n"), Some(Answer::AllowOnce));
+        assert_eq!(answer("S\n"), Some(Answer::AllowSession));
+        assert_eq!(answer("session\n"), Some(Answer::AllowSession));
+        assert_eq!(answer("d\n"), Some(Answer::Deny));
+        assert_eq!(answer("maybe\n"), Some(Answer::Deny));
+    }
+
+    #[test]
+    fn an_empty_line_or_end_of_input_denies() {
+        assert_eq!(answer("\n"), Some(Answer::Deny));
+        assert_eq!(answer(""), Some(Answer::Deny));
+    }
+
+    #[test]
+    fn the_question_names_the_endpoint_and_the_default() {
+        let mut output = Vec::new();
+        let _ = prompt_on(&b"d\n"[..], &mut output, &endpoint());
+        let text = String::from_utf8_lossy(&output);
+        assert!(text.contains("unknown.example.org:443"), "{text}");
+        assert!(text.contains("default deny"), "{text}");
     }
 }
 

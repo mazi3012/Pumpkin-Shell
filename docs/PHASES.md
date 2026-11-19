@@ -18,7 +18,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
-| 9 | Egress proxy | T7 | Both | | in-progress |
+| 9 | Egress proxy | T7 | Both | | in-progress (code complete, branch `phase-9-egress-proxy`; PR not opened, push blocked) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
@@ -232,7 +232,7 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 
 **Done when:**
 - [x] Kiro chat works through the proxy: enforce-mode session `b440c9f8`, signed in with the sandbox home, two chat replies, no blocked entries.
-- [~] An unknown domain triggers the ask prompt. Covered by the engine tests with a fake asker. Not yet seen on a live terminal.
+- [~] An unknown domain triggers the ask prompt. The engine asks through the `Asker` (engine tests with a fake asker), and the terminal prompt parses its answers (`ide::tests`: once/session allow, deny, empty line and end of input deny). A live prompt was not triggered: with the Kiro allowlist in enforce mode, Kiro did not contact an unlisted host in a 240 s run. Left open until a live run shows the prompt.
 - [x] A request to `169.254.169.254` is blocked: the sandbox probe `proxy refuses cloud metadata` gets `CONNECT tunnel failed, response 403` through the relay, and the direct probes show no route to it. A LAN address is refused by the engine test `an_ip_literal_on_a_private_address_is_refused_without_a_lookup`.
 
 Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pull request.
