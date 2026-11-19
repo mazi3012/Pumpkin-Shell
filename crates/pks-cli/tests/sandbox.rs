@@ -163,11 +163,14 @@ fn every_isolation_probe_passes_inside_the_real_sandbox() -> TestResult {
 #[test]
 fn a_failing_probe_makes_the_run_fail() -> TestResult {
     // The same sandbox, but the script is told to expect something false:
-    // the IDE is /bin/false, which exits 1. Proves the status is reported.
+    // the IDE is a shell that exits 1. Proves the status is reported.
     let layout = Layout::new()?;
     let mut spec = layout.spec();
-    spec.ide.binary = PathBuf::from("/usr/bin/false");
-    spec.ide_args = Vec::new();
+    // /usr/bin/sh resolves to a file under /usr/bin on every runner. (On some
+    // images /usr/bin/false is a symlink out of /usr/bin, which the spec
+    // correctly refuses.)
+    spec.ide.binary = PathBuf::from("/usr/bin/sh");
+    spec.ide_args = vec!["-c".into(), "exit 1".into()];
     let status = backend()?.run(&spec)?;
     assert!(!status.success());
     Ok(())

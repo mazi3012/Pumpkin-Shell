@@ -89,6 +89,15 @@ impl NestedDisplay {
     /// Fails when no number is free, when a helper cannot run, or when the
     /// server does not come up within ten seconds.
     pub fn start(tools: &Tools, dir: &Path, size: (u32, u32)) -> Result<Self, SandboxError> {
+        // Xephyr is a nested server: it runs inside a host X display. Without
+        // one it cannot start at all, so say so instead of trying every number.
+        if std::env::var_os("DISPLAY").is_none_or(|value| value.is_empty()) {
+            return Err(SandboxError::Setup(
+                "Xephyr runs inside a host X display, and DISPLAY is not set. \
+                 Start your desktop session, or start a virtual one (Xvfb)."
+                    .to_owned(),
+            ));
+        }
         let cookie = random_hex(16)?;
         let mut last_error = String::from("no display number was free");
         for number in FIRST_DISPLAY..=LAST_DISPLAY {

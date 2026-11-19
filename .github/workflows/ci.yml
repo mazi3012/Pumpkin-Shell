@@ -35,10 +35,18 @@ jobs:
       # the runner allows them. Both steps are Linux-only.
       - name: Install sandbox tools (Linux)
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap xserver-xephyr xauth x11-utils curl python3
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap xserver-xephyr xvfb xauth x11-utils curl python3
       - name: Allow unprivileged user namespaces (Linux)
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      # Xephyr is a nested server and needs a host X display. A headless runner
+      # has none, so start a virtual one (Xvfb) for the test steps.
+      - name: Start a virtual X display (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          nohup Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp > /tmp/xvfb.log 2>&1 &
+          for i in $(seq 1 20); do DISPLAY=:99 xdpyinfo >/dev/null 2>&1 && break; sleep 0.5; done
+          DISPLAY=:99 xdpyinfo >/dev/null && echo "DISPLAY=:99" >> "$GITHUB_ENV" && echo "virtual display :99 ready"
       - name: Show sandbox prerequisites (Linux)
         if: runner.os == 'Linux'
         run: |
