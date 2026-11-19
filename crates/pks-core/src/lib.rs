@@ -8,6 +8,7 @@ pub mod log;
 pub mod net;
 pub mod paths;
 pub mod policy;
+pub mod snapshot;
 pub mod trust;
 
 mod fsutil;

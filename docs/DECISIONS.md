@@ -84,6 +84,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-20 | **Open note: Kiro Extensions are blocked.** Kiro's vendor page lists `open-vsx.org` and `openvsx.eclipsecontent.org` for Extensions (an optional feature). They are not on our allowlist, so the Marketplace shows "Unable to search" (observed in a live session). User decision: keep the policy as it is for now, and revisit when extensions are needed | Live run; user decision |
 
+| 2026-11-21 | **Phase 10 decisions (user delegated the choices: "do what is best practice").** (1) **Pause** (CRITICAL pauses the IDE) is built in Phase 11, where the pause mechanism lives. In Phase 10, CRITICAL findings are staged and logged; nothing is paused early. (2) **Approved staged writes** are applied by `pumpkin-shell review`; rejected ones are deleted at session end. (3) **Snapshot** is a commit in a bare git directory inside the session dir, with the repo as work tree. The repo's `.git` (index, refs, config, hooks, filters, `core.fsmonitor`) is never read or written, and the global and system git configs are replaced with an empty file. A test proves a repo `core.fsmonitor` does not run. Ignored files (`.gitignore`) are not in the snapshot; files excluded only by `.git/info/exclude` are. (4) **Restore** writes into a new or empty directory, never into the repo, and refuses a session id that is not 32 lowercase hex digits (path safety). (5) The snapshot holds secrets the repo has in plain files; it lives in the host-only data dir (mode 0700 for session dirs). Limits: `git` must be installed; Windows restore is not tested until Phase 16 | Best practice; tests pass on Linux |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |

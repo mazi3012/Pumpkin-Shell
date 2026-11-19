@@ -248,7 +248,7 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 10.1. Protected paths bind-mounted from a staging copy; new protected paths caught by a host inotify watcher and quarantined (`WS-PROTECTED-WRITE`).
 10.2. `WS-AUTOAPPROVE` on staged config changes: CRITICAL, staged, pause.
 10.3. Watched paths diffed and shown in review (`WS-WATCHED-CHANGE`).
-10.4. Snapshot before launch: working tree including untracked non-ignored files, via a temporary index, bundled to the data dir. `pumpkin-shell restore <sid>`.
+10.4. [x] Snapshot before launch: working tree including untracked non-ignored files, via a temporary index in a bare git directory in the session dir (`snapshot.git`). `ide` refuses to start if the snapshot fails. `pumpkin-shell restore <sid> [--into DIR]` writes it into a new directory (default `<data>/restores/<sid>`). Tests: `pks-core` snapshot (7) and `pks-cli` restore (5, Linux). Not yet: a live `ide` run that shows the snapshot line (needs a GUI session).
 10.5. `WS-MASS-DELETE` (> 50 files or > 20% of tracked files) with a restore hint.
 10.6. Decoy `id_ed25519`, AWS credentials and `gh` `hosts.yml` with unique markers (`FS-DECOY-READ`).
 10.7. `WS-SECRET-WRITTEN` for secrets written into the repo.

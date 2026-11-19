@@ -77,7 +77,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         Err(error) => return setup(format!("your policy is not valid: {error}")),
     };
     let effective = pks_core::policy::Effective::from_user(&policy);
-    let session = match Session::start(&data, &effective) {
+    let session = match Session::start(&data, &effective, repo) {
         Ok(session) => session,
         Err(message) => return setup(message),
     };
@@ -153,7 +153,11 @@ struct Session {
 
 #[cfg(target_os = "linux")]
 impl Session {
-    fn start(data: &Path, effective: &pks_core::policy::Effective) -> Result<Self, String> {
+    fn start(
+        data: &Path,
+        effective: &pks_core::policy::Effective,
+        repo: &Path,
+    ) -> Result<Self, String> {
         use pks_core::keys;
         use pks_core::log::{Logger, new_session_id};
         use pks_proxy::{Config, Engine, serve};
@@ -167,6 +171,11 @@ impl Session {
             .map_err(|e| format!("cannot create {}: {e}", sessions.display()))?;
         let dir = sessions.join(&id);
         create_private_dir(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        // The snapshot comes before the IDE starts. Without it, the session
+        // does not start (PRD FR-WS: snapshot before launch).
+        let commit = pks_core::snapshot::create(repo, &dir)
+            .map_err(|e| format!("cannot take the snapshot of {}: {e}", repo.display()))?;
+        eprintln!("ide: snapshot {} taken", &commit[..12]);
         let key = keys::load_or_create_signing_key(&data.join("keys"))
             .map_err(|e| format!("signing key: {e}"))?;
         let logger = Logger::create(&dir.join("session.jsonl"), key, &id)
