@@ -1,0 +1,1 @@
+{ "servers": { "vs": { "type": "stdio", "command": "node" } } }

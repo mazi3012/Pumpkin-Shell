@@ -117,10 +117,15 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 4.12. Tag release **v0.1** with binaries for Linux and Windows.
 
 **Done when:**
-- Every fixture produces exactly its expected finding; the clean repo produces none.
-- `pumpkin-shell scan --ci` fails a GitHub Actions run on a fixture with hidden Unicode in `.kiro/steering` (PRD scenario 11).
+- [x] Every fixture produces exactly its expected finding; the clean repo produces none (`crates/pks-scan/tests/fixtures.rs`, 23 tests; run 2026-11-19).
+- [x] `pumpkin-shell scan --ci` exits 1 on the hidden-Unicode fixture (`crates/pks-cli/tests/scan.rs`, 10 tests) and the CI workflow has a step that fails unless that exit code is 1 (PRD scenario 11).
+- [ ] CI is green on both runners. Needs the branch pushed. The Windows ADS tests (`WS-ADS`) run only there.
 
-**Note:** JSON config files such as `settings.json` allow comments (JSONC). Parse them with a JSONC-tolerant parser.
+Steps: 4.0 [x], 4.1 [x] (`ignore` crate; `--no-ignore` for CI), 4.2 [x], 4.3 [x] (`settings.json` in `.vscode`, `.cursor`, `.windsurf`; MCP in `.kiro/settings`, `.mcp.json`, `.cursor`, `.vscode`), 4.4 [x] (rule `WS-MCP-SERVER`), 4.5 [x] (rule `WS-KIRO-HOOK`), 4.6 [x], 4.7 [x], 4.8 [x], 4.9 [x] (compiled and linted for Windows here, not run), 4.10 [x], 4.11 [x] (`ws-ads` has no fixture directory: an alternate stream cannot be stored in git, so its test creates one at run time), 4.12 [ ] not done: tagging **v0.1** needs your OK after the merge, and Linux and Windows binaries need a release workflow that does not exist yet.
+
+Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 11 unit + 4 + 10). Two protections were broken on purpose to confirm the tests fail (reading `.ignore` files, matching `.kiro/hooks` by string prefix).
+
+**Note:** JSON config files such as `settings.json` allow comments (JSONC). Parse them with a JSONC-tolerant parser. Done: `jsonc-parser`.
 
 ---
 

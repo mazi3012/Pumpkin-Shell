@@ -1,0 +1,6 @@
+[core]
+	repositoryformatversion = 0
+	hooksPath = /tmp/hooks
+	fsmonitor = /tmp/fsmonitor
+[include]
+	path = ../evil.cfg

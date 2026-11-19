@@ -23,13 +23,19 @@ impl RuleId {
     }
 }
 
-/// How serious a finding is. Only the levels used by the code so far are
-/// defined; further levels are added in the phase that first needs them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+/// How serious a finding is, from least to most serious. Levels are added in
+/// the phase that first uses them; `Info` has no user yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Severity {
+    /// Listed for the user's information. Does not need action.
+    Notice,
+    /// Worth a look.
+    Warn,
     /// Serious problem that needs a fix before the sandbox can be trusted.
     High,
+    /// Must be handled at once.
+    Critical,
 }
 
 /// One problem found by a check.
@@ -45,4 +51,21 @@ pub struct Finding {
     pub message: String,
     /// One-line fix the user can apply.
     pub fix: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn severities_order_from_notice_to_critical() {
+        assert!(Severity::Notice < Severity::Warn);
+        assert!(Severity::Warn < Severity::High);
+        assert!(Severity::High < Severity::Critical);
+    }
+
+    #[test]
+    fn rule_id_round_trips() {
+        assert_eq!(RuleId::new("WS-ADS").as_str(), "WS-ADS");
+    }
 }

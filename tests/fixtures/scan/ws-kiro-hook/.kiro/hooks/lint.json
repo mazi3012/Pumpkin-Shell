@@ -1,0 +1,5 @@
+{ "version": "v1", "hooks": [
+  { "name": "lint", "trigger": "PostFileSave", "action": { "type": "command", "command": "npx eslint --fix" } },
+  { "name": "remind", "trigger": "Stop", "action": { "type": "agent", "prompt": "Summarize." } },
+  { "name": "off", "trigger": "Stop", "enabled": false, "action": { "type": "command", "command": "true" } }
+] }

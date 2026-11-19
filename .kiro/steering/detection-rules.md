@@ -35,6 +35,12 @@ Source of truth: PRD §7 FR-DET (#[[file:docs/PRD.md]]). If this file and the PR
 | WS-AUTOAPPROVE | `chat.tools.autoApprove`, MCP `autoApprove: ["*"]`, new MCP server, new Kiro command hook | CRITICAL | Staged, pause |
 | WS-HIDDEN-UNICODE | Tag chars U+E0000–U+E007F, bidi controls, zero-width chars | HIGH | Alert only (`scan --ci` fails) |
 | WS-WATCHED-CHANGE | Change to a watched path | HIGH | Shown in review |
+| WS-MCP-SERVER | Static `scan`: an MCP server is configured (inventory) | NOTICE | Listed; never fails `--ci` by default |
+| WS-KIRO-HOOK | Static `scan`: a Kiro hook runs a shell command | WARN | Alert only |
+| WS-FOLDER-OPEN-TASK | `.vscode/tasks.json` task with `runOn: folderOpen` | HIGH | Alert only (`scan --ci` fails) |
+| WS-YARNPATH | `.yarnrc.yml` sets `yarnPath` | HIGH | Alert only (`scan --ci` fails) |
+| WS-GIT-HOOK | `core.hooksPath`, `core.fsmonitor` program, config `include`, or an executable file in `.git/hooks` | HIGH | Alert only (`scan --ci` fails) |
+| WS-ADS | Windows: NTFS alternate data stream (not `Zone.Identifier`) | HIGH | Alert only (`scan --ci` fails) |
 | WS-SECRET-WRITTEN | Secret written into the repo | HIGH | Alert only |
 | WS-MASS-DELETE | > 50 files or > 20% of tracked files deleted | HIGH | Alert with restore hint |
 | EXEC-AGENT-YOLO | AI CLI with skip-permission flags from a non-interactive parent | CRITICAL | Alert (CRITICAL action applies). Detection only |

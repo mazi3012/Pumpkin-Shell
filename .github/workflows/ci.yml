@@ -39,6 +39,16 @@ jobs:
       - name: Test
         run: cargo test --locked
 
+      - name: Scan fails on hidden Unicode in .kiro/steering (PRD scenario 11)
+        shell: bash
+        run: |
+          code=0
+          cargo run --locked --quiet -- scan --ci tests/fixtures/scan/ws-hidden-unicode || code=$?
+          echo "exit code: $code"
+          test "$code" -eq 1
+      - name: Scan passes on the clean fixture
+        shell: bash
+        run: cargo run --locked --quiet -- scan --ci tests/fixtures/scan/clean
       - name: cargo-deny
         run: cargo deny check
 
