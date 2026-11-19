@@ -213,7 +213,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 9.4. Unknown domains: hold 20 s and ask allow / always / deny (`NET-UNKNOWN-DOMAIN`); deny when headless.
 9.5. Optional `host_ports` relays, logged as NOTICE.
 9.6. Per-host upload byte counters (`NET-LARGE-UPLOAD` above 10 MB to a non-model-API host).
-9.7. Kiro profile with its exact domains, confirmed in monitor mode.
+9.7. Kiro profile with its exact domains, confirmed in monitor mode. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
 
 **Done when:**
 - Kiro chat works through the proxy.
@@ -261,7 +261,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 **Goal:** the host-side actions the sandbox may request but not perform.
 
 12.1. URL-open broker: the sandbox's `xdg-open` forwards to the host browser.
-12.2. OAuth callback relay back to the sandboxed IDE on loopback.
+12.2. OAuth callback relay back to the sandboxed IDE on loopback. Observed in Phase 5: Kiro IDE signs in with `redirect_uri=http://localhost:3128` and listens on `127.0.0.1:3128` inside the sandbox, so the host browser cannot reach it without a relay (`docs/poc/linux-kiro.md`).
 12.3. `git push` approval: prompt shows remote and branch.
 
 **Done when:** PRD scenarios 2 (Kiro sign-in) and 12 (`git push` prompt) pass.

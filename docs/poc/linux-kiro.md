@@ -40,11 +40,23 @@ Found while building this PoC and while reviewing the first version of it (PR #4
 | 4 | Raw X11 gives the sandbox the host display | The host socket `/tmp/.X11-unix/X0` shared with the sandbox | Xephyr nested server (Q4). Only its socket is mounted. `/tmp` is a fresh tmpfs | Probe `only the nested X socket is visible`; mutant that mounts the whole directory fails it |
 | 5 | The host `/tmp` was writable from the sandbox | `--bind /tmp /tmp` | `--tmpfs /tmp` | Probe list, `ls /tmp` shows only `.X11-unix` and `xauth` |
 | 6 | Chromium's sandbox needs a nested user namespace | bwrap sets `NoNewPrivs=1` on the sandbox, so the setuid `chrome-sandbox` helper cannot work | Leave user namespaces on (the default). Never pass `--no-sandbox` | In the sandbox: 15 processes, none with `--no-sandbox`. Renderers run in their own user and network namespace with `Seccomp: 2`. Adding `--disable-userns` makes Chromium abort: "The SUID sandbox helper binary was found, but is not configured correctly. Rather than run without sandboxing I'm aborting now" |
-| 7 | Kiro needs sign-in before the editor works | Product behavior | Not fixable in Phase 5. Phase 12 (brokers) | Screenshot: Kiro logo and a Sign in button |
+| 7 | Kiro needs sign-in before the editor works | Product behavior. Sign-in needs a browser, a callback port and internet (see "How Kiro's sign-in works") | Not fixable in Phase 5. Needs the Phase 9 proxy and the Phase 12 callback relay | Screenshots: Sign in button, then the "We will take you to your default web browser" screen. The sign-in click was recorded by a stub `xdg-open` that opens nothing |
 | 8 | D-Bus errors in the log | No session bus in the sandbox, on purpose | Ignore. Use `--password-store=basic` so the IDE does not look for a keyring | Log: `Failed to connect to the bus`; IDE still runs |
 | 9 | `Error: Unable to retrieve mac address` in the log | No network interface to read | Harmless; IDE runs | Log |
 | 10 | The script must not leave processes behind | | `--die-with-parent`, `-terminate` on Xephyr, a `trap` that removes the temp dir | `kill -9` of the script: all sandbox processes and Xephyr exit within 4 s. `kill -9` skips the trap, so the temp dir (cookie, mode 700) stays. It is useless once Xephyr exits |
 | 11 | A repo path that contains `$HOME` would hand over the home directory | `--bind <repo>` is read-write | The script refuses a repo that is, or contains, `$HOME`. The test is by path component: `/tmp/pre/maz` is allowed when `HOME=/tmp/pre/mazidur` | 12 argument and path cases tested |
+
+## How Kiro's sign-in works (observed, 2026-11-19)
+
+Observed by clicking **Sign in** in the sandboxed Kiro with a stub `xdg-open` that only wrote down what it was asked to open. The link was never opened, and no account was used.
+
+- Kiro asks the system to open `https://app.kiro.dev/signin?state=...&code_challenge=...&code_challenge_method=S256&redirect_uri=http://localhost:3128&redirect_from=KiroIDE`. It is an OAuth flow with PKCE, and the same link is shown on screen to copy.
+- Kiro starts a listener on **`127.0.0.1:3128`**, and it did so inside the sandbox's own network namespace: the port was open there and not on the host. The browser is told to come back to `http://localhost:3128`, which on the host reaches nothing.
+- So the flow cannot finish in this sandbox, for two separate reasons: nothing carries the browser's callback to the sandbox, and the sandbox has no network for the token exchange.
+- Kiro's docs say sign-in "completes in the browser" and list Google, GitHub, AWS Builder ID and organization sign-in (kiro.dev/docs/getting-started/authentication). They also say Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev/docs/getting-started/installation), which is what the Phase 9 proxy relies on.
+- **Not tested:** whether Kiro picks another port when 3128 is taken, which domains Kiro needs after sign-in, and whether the callback also arrives by a `kiro://` link.
+
+Design consequence for later phases. The callback needs a relay: a host listener on `127.0.0.1:3128` that forwards to the sandbox over a unix socket in a shared directory, with a small helper inside the sandbox (`socat` is installed here) that connects that socket to `127.0.0.1:3128`. Nothing goes out of the sandbox, and one port goes in. The token exchange needs the Phase 9 proxy with an exact-host allowlist.
 
 ## Minimum permissions
 
@@ -69,7 +81,7 @@ Mutation check: five broken copies of the script were run. The old `--ro-bind /`
 
 ## Not tested and known limits
 
-- **Kiro editing a file.** Blocked by sign-in (fix 7). It needs Phase 12, or a manual sign-in by the user with temporary network access.
+- **Kiro editing a file.** Blocked by sign-in (fix 7). It needs the Phase 9 proxy and the Phase 12 callback relay, or a manual sign-in by the user with temporary network access (which weakens the sandbox for that test).
 - **Wayland, ARM64, GPU speed, clipboard** between the sandbox and the host. Not tested.
 - **AppArmor-restricted user namespaces.** This machine has `apparmor_restrict_unprivileged_userns = 0`. The restricted case is not tested here (`doctor` detects it).
 - **Same-user access to Xephyr.** The cookie file is mode 700, but other processes of the same user could read it. The sandbox also runs as the same uid, so this is a limit of the design, not a leak from the sandbox.
