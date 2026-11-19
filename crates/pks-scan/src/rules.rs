@@ -524,20 +524,31 @@ pub struct RuleProvider;
 impl RuleProvider {
     /// Returns a list of all detection rules.
     pub fn all() -> Vec<Box<dyn Rule>> {
-        let mut rules: Vec<Box<dyn Rule>> = vec![
-            Box::new(HiddenUnicodeRule),
-            Box::new(AutoApproveRule),
-            Box::new(McpServerInventoryRule),
-            Box::new(KiroCommandHookRule),
-            Box::new(FolderOpenTaskRule),
-            Box::new(YarnPathRule),
-            Box::new(GitHooksRule),
-        ];
-
         #[cfg(target_os = "windows")]
-        rules.push(Box::new(AlternateDataStreamRule));
-
-        rules
+        {
+            vec![
+                Box::new(HiddenUnicodeRule),
+                Box::new(AutoApproveRule),
+                Box::new(McpServerInventoryRule),
+                Box::new(KiroCommandHookRule),
+                Box::new(FolderOpenTaskRule),
+                Box::new(YarnPathRule),
+                Box::new(GitHooksRule),
+                Box::new(AlternateDataStreamRule),
+            ]
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            vec![
+                Box::new(HiddenUnicodeRule),
+                Box::new(AutoApproveRule),
+                Box::new(McpServerInventoryRule),
+                Box::new(KiroCommandHookRule),
+                Box::new(FolderOpenTaskRule),
+                Box::new(YarnPathRule),
+                Box::new(GitHooksRule),
+            ]
+        }
     }
 }
 
