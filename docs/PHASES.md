@@ -13,8 +13,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3 optional, not installed; 1.4 applied 2026-11-20) |
 | 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
-| 4 | `scan` | T4 | Both | **v0.1** | in-progress |
-| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
+| 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
+| 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | in-progress (accepted by the user 2026-11-19 with a VS Code stand-in; PR not yet open) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | todo |
 | 8 | Linux `ide` backend | T6 | Linux | | todo |
@@ -119,9 +119,9 @@ Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x]
 **Done when:**
 - [x] Every fixture produces exactly its expected finding; the clean repo produces none (`crates/pks-scan/tests/fixtures.rs`, 23 tests; run 2026-11-19).
 - [x] `pumpkin-shell scan --ci` exits 1 on the hidden-Unicode fixture (`crates/pks-cli/tests/scan.rs`, 10 tests) and the CI workflow has a step that fails unless that exit code is 1 (PRD scenario 11).
-- [ ] CI is green on both runners. Needs the branch pushed. The Windows ADS tests (`WS-ADS`) run only there.
+- [x] CI is green on both runners: `check (ubuntu-latest)` and `check (windows-latest)` passed on PR #5 and again on `main` at 34e12c6. The Windows ADS tests ran there for the first time.
 
-Steps: 4.0 [x], 4.1 [x] (`ignore` crate; `--no-ignore` for CI), 4.2 [x], 4.3 [x] (`settings.json` in `.vscode`, `.cursor`, `.windsurf`; MCP in `.kiro/settings`, `.mcp.json`, `.cursor`, `.vscode`), 4.4 [x] (rule `WS-MCP-SERVER`), 4.5 [x] (rule `WS-KIRO-HOOK`), 4.6 [x], 4.7 [x], 4.8 [x], 4.9 [x] (compiled and linted for Windows here, not run), 4.10 [x], 4.11 [x] (`ws-ads` has no fixture directory: an alternate stream cannot be stored in git, so its test creates one at run time), 4.12 [ ] not done: tagging **v0.1** needs your OK after the merge, and Linux and Windows binaries need a release workflow that does not exist yet.
+Steps: 4.0 [x], 4.1 [x] (`ignore` crate; `--no-ignore` for CI), 4.2 [x], 4.3 [x] (`settings.json` in `.vscode`, `.cursor`, `.windsurf`; MCP in `.kiro/settings`, `.mcp.json`, `.cursor`, `.vscode`), 4.4 [x] (rule `WS-MCP-SERVER`), 4.5 [x] (rule `WS-KIRO-HOOK`), 4.6 [x], 4.7 [x], 4.8 [x], 4.9 [x] (ran green on the Windows runner), 4.10 [x], 4.11 [x] (`ws-ads` has no fixture directory: an alternate stream cannot be stored in git, so its test creates one at run time), 4.12 [ ] not done: tagging **v0.1** needs your OK after the merge, and Linux and Windows binaries need a release workflow that does not exist yet.
 
 Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 11 unit + 4 + 10). Two protections were broken on purpose to confirm the tests fail (reading `.ignore` files, matching `.kiro/hooks` by string prefix).
 
@@ -140,11 +140,15 @@ Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 1
 5.5. Record every breakage and the minimum permission that fixed it in `docs/poc/linux-kiro.md`.
 
 **Done when:**
-- Kiro opens the repo and edits a file.
-- `cat ~/.ssh/*` from Kiro's terminal fails.
-- No network except the stub.
+- [x] Kiro opens the repo and edits a file. **Accepted by the user on 2026-11-19 as met with a stand-in.** Not fully met: Kiro starts in the sandbox but stops at its Sign in screen (needs the Phase 12 broker). A file edit through the GUI was shown with VS Code, which has the same Code-OSS base, not with Kiro.
+- [x] `cat ~/.ssh/*` from the IDE's terminal fails (VS Code terminal; `--check` gives the same 23 passing probes for Kiro).
+- [x] No network except the stub: no network at all, no stub yet (Phase 9).
 
-**Blocked by:** Q4 (X11 approach). This machine has no Wayland.
+Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr`), 5.3 [x] (nested userns; `--disable-userns` makes Chromium abort), 5.4 [x] (no network), 5.5 [x] (`docs/poc/linux-kiro.md`).
+
+**Decision (user, 2026-11-19):** Phase 5 is accepted with VS Code as the stand-in. The real Kiro test is PRD scenario 2 (Kiro sign-in), after the Phase 9 proxy and the Phase 12 callback relay.
+
+**Blocked by:** none. Q4 was decided on 2026-11-19: Xephyr.
 
 ---
 
@@ -209,7 +213,7 @@ Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 1
 9.4. Unknown domains: hold 20 s and ask allow / always / deny (`NET-UNKNOWN-DOMAIN`); deny when headless.
 9.5. Optional `host_ports` relays, logged as NOTICE.
 9.6. Per-host upload byte counters (`NET-LARGE-UPLOAD` above 10 MB to a non-model-API host).
-9.7. Kiro profile with its exact domains, confirmed in monitor mode.
+9.7. Kiro profile with its exact domains, confirmed in monitor mode. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
 
 **Done when:**
 - Kiro chat works through the proxy.
@@ -257,7 +261,7 @@ Tests: 95 in the workspace (pks-core 2, pks-scan 45 unit + 23 fixture, pks-cli 1
 **Goal:** the host-side actions the sandbox may request but not perform.
 
 12.1. URL-open broker: the sandbox's `xdg-open` forwards to the host browser.
-12.2. OAuth callback relay back to the sandboxed IDE on loopback.
+12.2. OAuth callback relay back to the sandboxed IDE on loopback. Observed in Phase 5: Kiro IDE signs in with `redirect_uri=http://localhost:3128` and listens on `127.0.0.1:3128` inside the sandbox, so the host browser cannot reach it without a relay (`docs/poc/linux-kiro.md`).
 12.3. `git push` approval: prompt shows remote and branch.
 
 **Done when:** PRD scenarios 2 (Kiro sign-in) and 12 (`git push` prompt) pass.

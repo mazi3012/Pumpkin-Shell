@@ -44,6 +44,15 @@ Record every product or architecture decision here with a date. Never delete ent
 | 2026-11-19 | Known limits of Phase 4, not fixed on purpose: (1) U+200C and U+200D are legitimate in emoji and in Persian and Indic text and are still reported; (2) other invisible characters (variation selectors, soft hyphen, invisible operators) are not in the PRD list and are not checked; (3) `.yarnrc.yml` is read line by line, not as YAML, so a root written in flow style is missed; (4) Kiro hooks are read in the v1 format only (kiro.dev/docs/hooks, 2026-11-12); the pre-1.0 hook format is not verified and not scanned; (5) a `.git` file (worktree or submodule) and files named by a git `include` are reported but not read; (6) user-level configs under `~` are not scanned; (7) a path is checked, then read, so a tree that changes during the scan can race; (8) the ADS check on a non-NTFS volume may report errors, which is unverified | Honest limits. Each can become its own task |
 | 2026-11-19 | The Windows stream code (`ads.rs`, the only `unsafe` in `pks-scan`) was compiled and passed clippy `-D warnings` for `x86_64-pc-windows-msvc` on this Linux machine. It has **not been run**. Its tests run on the Windows CI runner only | No Windows machine (Q5) |
 
+| 2026-11-19 | **Q4 decided: nested X server with Xephyr** for the Linux sandbox display. The sandbox sees only the Xephyr socket, never the host `:0`, so it cannot read host keystrokes. Wayland and raw-X11-with-opt-in were rejected: Wayland is untested with Kiro here, and raw X11 exposes the host display | User decision. Xephyr is installed at `/usr/bin/Xephyr`; no root needed |
+
+| 2026-11-19 | Phase 5 PoC findings that change later phases: (1) the sandbox root is an allowlist (`/usr`, a few `/etc` entries), never `--ro-bind / /`, which exposed D-Bus, the keyring ssh-agent, `docker.sock`, `~/.ssh`, `~/.aws` and `/media`; (2) bwrap 0.9.0 names are `--setenv`, `--unsetenv`, `--clearenv`; (3) the environment is cleared and six variables set; (4) nested user namespaces must stay on, since `--disable-userns` makes Chromium abort; (5) `--new-session` and `--die-with-parent` are used, and Xephyr runs with `-terminate`; (6) the Phase 8 Rust backend must reproduce the 23 probes of `linux-kiro.sh --check` as tests | Tested on this machine; see `docs/poc/linux-kiro.md` |
+| 2026-11-19 | Kiro stops at a Sign in screen inside the sandbox, so Phase 5's "Kiro edits a file" was shown with VS Code instead. Tokens are never copied from the real Kiro into the sandbox home (PRD §3: no host credentials). Sign-in works only after the Phase 12 brokers (URL open, OAuth callback) | Screenshot of the sandboxed Kiro, 2026-11-19 |
+
+| 2026-11-19 | **How to test Kiro itself.** Kiro IDE sign-in uses `redirect_uri=http://localhost:3128` and a listener on `127.0.0.1:3128` inside the sandbox (observed with a stub `xdg-open`, nothing opened). A real Kiro test needs (1) the Phase 9 proxy for the token exchange and (2) a callback relay from the host's port 3128 into the sandbox (Phase 12). Until then Phase 5 shows Kiro starting, its sign-in screen, and the same sandbox editing files with VS Code. PRD acceptance scenario 2 (Kiro sign-in) is the Kiro test | Observed 2026-11-19; the user's click on Sign in produced the captured link |
+
+| 2026-11-19 | **Phase 5 accepted with a VS Code stand-in.** The "Kiro edits a file" item was shown with VS Code 1.146.0 in the same sandbox, not with Kiro. The Kiro-specific test moves to PRD scenario 2 after Phases 9 and 12 | User decision: "yes accept phase 5" |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |
@@ -59,6 +68,6 @@ Record every product or architecture decision here with a date. Never delete ent
 | Q1 | Spelling: "Pumpkin-Shell" or "PumpkinShell"? | Crate names, binary name |
 | Q2 | One-time admin install on Windows acceptable? | Windows backend design (Task 3, 14) |
 | Q3 | Linux first then Windows, or ship together? | Release plan |
-| Q4 | Dev machine is an **X11** session (no Wayland). Use a nested X server (Xpra/Xephyr) for isolation, or X11 opt-in with warning, for the Linux PoC? | Task 2 |
+| Q4 | Dev machine is an **X11** session (no Wayland). Use a nested X server (Xpra/Xephyr) for isolation, or X11 opt-in with warning, for the Linux PoC? | Task 2 | **Decided 2026-11-19: Xephyr.**
 | Q5 | Is a Windows machine or VM available for Tasks 3, 14, 15? | Windows work |
 | Q6 | License (Apache-2.0, MIT, dual, or AGPL)? | Public repo, crate metadata |
