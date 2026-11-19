@@ -1,14 +1,34 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
-use clap::Parser;
+mod doctor;
+
+use std::process::ExitCode;
+
+use clap::{Parser, Subcommand};
 
 /// Sandbox and tripwire system for AI-powered IDEs on Linux and Windows.
 #[derive(Parser)]
 #[command(name = "pumpkin-shell", version)]
-struct Cli {}
+struct Cli {
+    #[command(subcommand)]
+    command: Option<Command>,
+}
 
-fn main() {
-    Cli::parse();
+#[derive(Subcommand)]
+enum Command {
+    /// Check whether this machine can run the sandbox, and how to fix each problem.
+    Doctor {
+        /// Print the report as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+fn main() -> ExitCode {
+    match Cli::parse().command {
+        Some(Command::Doctor { json }) => doctor::run(json),
+        None => ExitCode::SUCCESS,
+    }
 }
 
 #[cfg(test)]

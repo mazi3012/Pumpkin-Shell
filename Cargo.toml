@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pks-cli"]
+members = ["crates/pks-core", "crates/pks-cli"]
 
 [workspace.package]
 version = "0.0.0"
@@ -12,7 +12,14 @@ repository = "https://github.com/mazi3012/pumpkin-shell"
 
 [workspace.dependencies]
 # Versions checked on crates.io before adding (tech.md "Versions" rule).
+# Phase 3 additions checked 2026-11-19: serde 1.0.229 (2026-07-18),
+# serde_json 1.0.154 (2026-10-11), libc 0.2.191 (2026-10-16),
+# landlock 0.4.7 (2026-07-27). All MIT and/or Apache-2.0, none yanked.
 clap = { version = "4.6.8", features = ["derive"] }
+landlock = "0.4.7"
+libc = "0.2.191"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
 
 [workspace.lints.rust]
 # tech.md: no `unsafe` except in thin, documented FFI wrappers. A crate that

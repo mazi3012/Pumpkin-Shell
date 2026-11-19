@@ -10,9 +10,9 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 
 | Phase | Name | PRD | Platform | Milestone | Status |
 |---|---|---|---|---|---|
-| 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3, 1.4 optional, not applied) |
-| 2 | Workspace skeleton and CI | T1 | Both | | in-progress |
-| 3 | `doctor` (Linux) | T1 | Linux | | todo |
+| 1 | Dev environment | PLAN Step 0 | Linux | | done (1.3 optional, not installed; 1.4 applied 2026-11-20) |
+| 2 | Workspace skeleton and CI | T1 | Both | | done (PR #1 merged) |
+| 3 | `doctor` (Linux) | T1 | Linux | | in-progress |
 | 4 | `scan` | T4 | Both | **v0.1** | todo |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | todo |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
@@ -65,10 +65,10 @@ Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <
 
 **Done when:**
 - [x] All CI jobs pass locally on Linux (fmt, clippy, test, cargo-deny, cargo-audit; checked 2026-11-19).
-- [ ] CI is green on both runners. Needs the branch pushed to GitHub. Open question: the local `origin` is `mazi3012/pumkinshell` but the PRD names `mazi3012/pumpkin-shell`; both exist.
-- [ ] PR opened and reviewed (`in-review (PR #n)`).
+- [x] CI is green on both runners: `check (ubuntu-latest)` and `check (windows-latest)` passed on PR #1 (merged into `mazi3012/pumpkin-shell` main at e6c5c25).
+- [x] PR opened and merged: PR #1, `mazi3012/pumpkin-shell`.
 
-Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] workflow written, not yet run on GitHub, 2.5 [x].
+Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] CI runs on both runners, 2.5 [x].
 
 **Blocked by:** Q1 (final binary name) only if you want a different name than `pumpkin-shell`. Q6 (license) for crate metadata; `license` can stay unset until decided.
 
@@ -90,8 +90,11 @@ Steps: 2.1 [x], 2.2 [x], 2.3 [x] (5 tests pass), 2.4 [x] workflow written, not y
 3.9. Human output and `--json` output.
 
 **Done when:**
-- On this machine `doctor` passes the kernel, bwrap, userns and Landlock checks, warns about X11, and reports `SYS-IDE-TAMPERABLE` for `/usr/share/kiro` (unless 1.4 was applied).
-- Unit tests cover version parsing and each check's pass/fail mapping.
+- [x] On this machine `doctor` passes the kernel, bwrap, userns and Landlock checks, warns about X11, and reports `SYS-IDE-TAMPERABLE` for `/usr/share/kiro` (67 of 4916 files, checked 2026-11-20).
+- [x] Unit tests cover version parsing and each check's pass/fail mapping (10 unit tests in `doctor/checks.rs`).
+- [ ] Windows CI runs the new code (not yet pushed).
+
+Steps: 3.0 [x] `pks-core` (RuleId, Severity, Finding), 3.1 [x], 3.2 [x], 3.3 [x], 3.4 [x] (AppArmor sysctl read; fail path covered by unit test only), 3.5 [x] Landlock ABI v8, 3.6 [x] seccomp notify probe, 3.7 [x] X11 warning, 3.8 [x] `SYS-IDE-TAMPERABLE`, 3.9 [x] human and `--json`.
 
 ---
 
