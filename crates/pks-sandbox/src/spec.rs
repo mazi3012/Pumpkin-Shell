@@ -125,13 +125,19 @@ pub fn check(spec: &LaunchSpec) -> Result<(), SandboxError> {
         return Err(refuse("the IDE home and the repository must not overlap"));
     }
 
-    // The IDE install: read-only, under /usr.
+    // The IDE install: read-only, under /usr. The rule is about the Linux
+    // mount layout; Windows has its own rule in Phase 16.
     let dir = canonical(&spec.ide.dir, "IDE install directory")?;
+    #[cfg(target_os = "linux")]
     if !dir.is_dir() || !dir.starts_with("/usr") || dir == Path::new("/usr") {
         return Err(refuse(format!(
             "{} must be a directory under /usr",
             dir.display()
         )));
+    }
+    #[cfg(not(target_os = "linux"))]
+    if !dir.is_dir() {
+        return Err(refuse(format!("{} is not a directory", dir.display())));
     }
     let binary = canonical(&spec.ide.binary, "IDE program")?;
     if !binary.starts_with(&dir) || !binary.is_file() {
