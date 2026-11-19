@@ -264,8 +264,10 @@ mod tests {
     }
 
     #[cfg(not(unix))]
-    fn bind_socket(_path: &Path) -> std::io::Result<()> {
-        Ok(())
+    fn bind_socket(path: &Path) -> std::io::Result<()> {
+        // Windows has no Unix socket here (the Windows backend is Phase 16),
+        // and `is_socket` accepts any path. The path must exist to resolve.
+        fs::write(path, b"")
     }
 
     #[cfg(unix)]
