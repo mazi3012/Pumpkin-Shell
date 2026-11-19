@@ -1,7 +1,8 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
 mod doctor;
-
+mod log;
+mod policy;
 mod scan;
 
 use std::process::ExitCode;
@@ -39,12 +40,40 @@ enum Command {
         #[arg(long)]
         ci: bool,
     },
+
+    /// Policy management commands.
+    Policy {
+        #[command(subcommand)]
+        cmd: policy::PolicyCmd,
+    },
+
+    /// Log management commands.
+    Log {
+        #[command(subcommand)]
+        cmd: log::LogCmd,
+    },
 }
 
 fn main() -> ExitCode {
-    match Cli::parse().command {
+    let cli = Cli::parse();
+
+    match cli.command {
         Some(Command::Doctor { json }) => doctor::run(json),
         Some(Command::Scan { path, json, ci }) => scan::run(&path, json, ci),
+        Some(Command::Policy { cmd }) => match policy::handle_policy_cmd(&cmd) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                ExitCode::from(2)
+            }
+        },
+        Some(Command::Log { cmd }) => match log::handle_log_cmd(&cmd) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                ExitCode::from(2)
+            }
+        },
         None => ExitCode::SUCCESS,
     }
 }

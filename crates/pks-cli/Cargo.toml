@@ -14,9 +14,12 @@ path = "src/main.rs"
 [dependencies]
 clap.workspace = true
 pks-core = { path = "../pks-core", version = "0.0.0" }
+pks-policy = { path = "../pks-policy", version = "0.1.0" }
 pks-scan = { path = "../pks-scan", version = "0.0.0" }
 serde.workspace = true
 serde_json.workspace = true
+anyhow = "1.0.89"
+base64 = "0.21.7"
 
 # Linux-only probes (doctor). Windows gets its own probes in Phase 16.
 [target.'cfg(target_os = "linux")'.dependencies]
