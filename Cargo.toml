@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pks-core", "crates/pks-cli", "crates/pks-policy", "crates/pks-scan", "crates/pks-sandbox"]
+members = ["crates/pks-core", "crates/pks-cli", "crates/pks-policy", "crates/pks-proxy", "crates/pks-scan", "crates/pks-sandbox"]
 
 [workspace.package]
 version = "0.0.0"
@@ -27,6 +27,8 @@ thiserror = "1.0.56"
 # Phase 7: policy and log crate
 pks-policy = { path = "crates/pks-policy", version = "0.1.0" }
 base64 = "0.21.7"
+# Phase 9: proxy crate
+pks-proxy = { path = "crates/pks-proxy", version = "0.1.0" }
 
 [workspace.lints.rust]
 # tech.md: no `unsafe` except in thin, documented FFI wrappers. A crate that

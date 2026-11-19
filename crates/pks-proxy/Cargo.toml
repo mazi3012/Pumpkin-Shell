@@ -1,0 +1,23 @@
+[package]
+name = "pks-proxy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1.0.89"
+thiserror = "1.0.63"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tokio = { version = "1.40.0", features = ["full"] }
+hyper = { version = "1.4.0", features = ["full"] }
+hyper-util = "0.1.6"
+futures = "0.3.30"
+ipnet = "2.9.0"
+tokio-util = "0.7.11"
+tracing = "0.1.40"
+
+[dev-dependencies]
+tempfile = "3.12.0"
+
+[lints]
+workspace = true

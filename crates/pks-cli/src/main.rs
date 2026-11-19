@@ -4,6 +4,7 @@ mod doctor;
 mod ide;
 mod log;
 mod policy;
+mod proxy;
 mod scan;
 
 use std::process::ExitCode;
@@ -56,6 +57,12 @@ enum Command {
         #[command(subcommand)]
         cmd: log::LogCmd,
     },
+
+    /// Proxy management commands.
+    Proxy {
+        #[command(subcommand)]
+        cmd: proxy::ProxyArgs,
+    },
 }
 
 #[derive(Parser)]
@@ -83,6 +90,13 @@ fn main() -> ExitCode {
             }
         },
         Some(Command::Log { cmd }) => match log::handle_log_cmd(&cmd) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                ExitCode::from(2)
+            }
+        },
+        Some(Command::Proxy { cmd }) => match proxy::run(&cmd) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("Error: {}", e);
