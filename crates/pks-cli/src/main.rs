@@ -72,6 +72,9 @@ enum Command {
         /// Unix socket of the egress proxy, as seen inside the sandbox.
         #[arg(long = "relay-socket")]
         relay_socket: Option<PathBuf>,
+        /// Host port the IDE may reach on loopback (repeatable, PRD FR-NET).
+        #[arg(long = "relay-host-port", requires = "relay_socket")]
+        relay_host_ports: Vec<u16>,
         /// The program to run after the restrictions are applied.
         #[arg(last = true, required = true, num_args = 1..)]
         command: Vec<OsString>,
@@ -85,6 +88,9 @@ enum Command {
         /// Unix socket to forward to.
         #[arg(long)]
         socket: PathBuf,
+        /// Host port to listen on and forward to the host's loopback (repeatable).
+        #[arg(long = "host-port")]
+        host_port: Vec<u16>,
     },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
     Trust {
@@ -164,9 +170,21 @@ fn main() -> ExitCode {
             ro,
             relay_listen,
             relay_socket,
+            relay_host_ports,
             command,
-        }) => ide::sandbox_init(&rw, &ro, relay_listen, relay_socket, &command),
-        Some(Command::SandboxRelay { listen, socket }) => ide::sandbox_relay(listen, &socket),
+        }) => ide::sandbox_init(
+            &rw,
+            &ro,
+            relay_listen,
+            relay_socket,
+            &relay_host_ports,
+            &command,
+        ),
+        Some(Command::SandboxRelay {
+            listen,
+            socket,
+            host_port,
+        }) => ide::sandbox_relay(listen, &socket, &host_port),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

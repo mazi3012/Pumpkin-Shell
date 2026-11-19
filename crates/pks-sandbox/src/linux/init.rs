@@ -138,6 +138,8 @@ pub fn run(
 pub struct Relay {
     pub listen: std::net::SocketAddr,
     pub socket: PathBuf,
+    /// Host ports the IDE may reach on its loopback (PRD FR-NET).
+    pub host_ports: Vec<u16>,
 }
 
 /// Starts the relay as a child process and waits until it accepts
@@ -155,6 +157,12 @@ fn start_relay(relay: &Relay) -> Result<(), SandboxError> {
         .arg(relay.listen.to_string())
         .arg("--socket")
         .arg(&relay.socket)
+        .args(
+            relay
+                .host_ports
+                .iter()
+                .flat_map(|port| ["--host-port".to_owned(), port.to_string()]),
+        )
         .spawn()
         .map_err(|e| SandboxError::Io {
             context: "cannot start the relay".to_owned(),

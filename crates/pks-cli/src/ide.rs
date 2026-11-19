@@ -101,6 +101,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         roots: Roots { home, config, data },
         display_size: (1280, 800),
         proxy_socket: session.socket.clone(),
+        host_ports: effective.host_ports.iter().copied().collect(),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -203,6 +204,7 @@ impl Session {
         });
         let engine = Engine::new(Config {
             allow: effective.allow.clone(),
+            host_ports: effective.host_ports.clone(),
             mode: effective.mode,
             resolver: Arc::new(pks_proxy::SystemResolver),
             dialer: Arc::new(pks_proxy::TcpDialer),
@@ -304,10 +306,15 @@ pub fn sandbox_init(
     ro: &[PathBuf],
     relay_listen: Option<std::net::SocketAddr>,
     relay_socket: Option<PathBuf>,
+    relay_host_ports: &[u16],
     command: &[std::ffi::OsString],
 ) -> ExitCode {
     let relay = match (relay_listen, relay_socket) {
-        (Some(listen), Some(socket)) => Some(pks_sandbox::linux::init::Relay { listen, socket }),
+        (Some(listen), Some(socket)) => Some(pks_sandbox::linux::init::Relay {
+            listen,
+            socket,
+            host_ports: relay_host_ports.to_vec(),
+        }),
         _ => None,
     };
     let error = pks_sandbox::linux::init::run(rw, ro, command, relay.as_ref());
@@ -321,6 +328,7 @@ pub fn sandbox_init(
     _ro: &[PathBuf],
     _relay_listen: Option<std::net::SocketAddr>,
     _relay_socket: Option<PathBuf>,
+    _relay_host_ports: &[u16],
     _command: &[std::ffi::OsString],
 ) -> ExitCode {
     eprintln!("sandbox-init: Linux only");
@@ -329,8 +337,8 @@ pub fn sandbox_init(
 
 /// The relay inside the sandbox. Runs until the sandbox ends.
 #[cfg(target_os = "linux")]
-pub fn sandbox_relay(listen: std::net::SocketAddr, socket: &Path) -> ExitCode {
-    match pks_sandbox::linux::relay::run(listen, socket) {
+pub fn sandbox_relay(listen: std::net::SocketAddr, socket: &Path, host_ports: &[u16]) -> ExitCode {
+    match pks_sandbox::linux::relay::run(listen, socket, host_ports) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("sandbox-relay: {error}");
@@ -340,7 +348,11 @@ pub fn sandbox_relay(listen: std::net::SocketAddr, socket: &Path) -> ExitCode {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn sandbox_relay(_listen: std::net::SocketAddr, _socket: &Path) -> ExitCode {
+pub fn sandbox_relay(
+    _listen: std::net::SocketAddr,
+    _socket: &Path,
+    _host_ports: &[u16],
+) -> ExitCode {
     eprintln!("sandbox-relay: Linux only");
     ExitCode::from(1)
 }

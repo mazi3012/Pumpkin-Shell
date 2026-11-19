@@ -146,6 +146,8 @@ struct RawPolicy {
 struct RawNetwork {
     #[serde(default)]
     allow: Vec<String>,
+    #[serde(default)]
+    host_ports: Vec<u16>,
 }
 
 #[derive(Deserialize)]
@@ -161,6 +163,9 @@ pub struct PolicyFile {
     pub rules: BTreeMap<RuleId, Action>,
     /// Endpoints allowed without asking. Only the user policy may set them.
     pub allow: BTreeSet<HostPort>,
+    /// Host ports the sandbox may reach on the host's loopback (PRD FR-NET,
+    /// scenario 7). Only the user policy may set them.
+    pub host_ports: BTreeSet<u16>,
 }
 
 impl PolicyFile {
@@ -192,6 +197,7 @@ fn parse_with(text: &str, allow_network: bool) -> Result<PolicyFile, PolicyError
             return Err(PolicyError::Version(raw.version));
         }
         let mut allow = BTreeSet::new();
+        let mut host_ports = BTreeSet::new();
         if let Some(network) = raw.network {
             if !allow_network {
                 return Err(PolicyError::Invalid(
@@ -203,6 +209,19 @@ fn parse_with(text: &str, allow_network: bool) -> Result<PolicyFile, PolicyError
                 let endpoint = HostPort::parse(&entry)
                     .map_err(|error| PolicyError::Invalid(error.to_string()))?;
                 allow.insert(endpoint);
+            }
+            for port in network.host_ports {
+                if port == 0 {
+                    return Err(PolicyError::Invalid(
+                        "host_ports: port 0 is not a port".to_owned(),
+                    ));
+                }
+                if port == PROXY_RELAY_PORT {
+                    return Err(PolicyError::Invalid(format!(
+                        "host_ports: {PROXY_RELAY_PORT} is used by the sandbox's proxy relay"
+                    )));
+                }
+                host_ports.insert(port);
             }
         }
         let mut rules = BTreeMap::new();
@@ -220,6 +239,7 @@ fn parse_with(text: &str, allow_network: bool) -> Result<PolicyFile, PolicyError
             mode: raw.mode,
             rules,
             allow,
+            host_ports,
         })
     }
 }
@@ -231,6 +251,8 @@ pub struct Effective {
     pub actions: BTreeMap<RuleId, Action>,
     /// Endpoints allowed without asking, from the user policy.
     pub allow: BTreeSet<HostPort>,
+    /// Host ports reachable on the host's loopback, from the user policy.
+    pub host_ports: BTreeSet<u16>,
 }
 
 impl Effective {
@@ -244,6 +266,7 @@ impl Effective {
             mode: user.mode.unwrap_or(Mode::Enforce),
             actions,
             allow: user.allow.clone(),
+            host_ports: user.host_ports.clone(),
         }
     }
 
@@ -257,6 +280,9 @@ impl Effective {
         }
         for endpoint in &self.allow {
             text.push_str(&format!("allow={endpoint}\n"));
+        }
+        for port in &self.host_ports {
+            text.push_str(&format!("host_port={port}\n"));
         }
         hex::sha256(text.as_bytes())
     }
@@ -471,6 +497,10 @@ pub fn read_user_policy(config_dir: &Path) -> Result<Option<PolicyFile>, PolicyE
     PolicyFile::parse(&text).map(Some)
 }
 
+/// The port the in-sandbox relay listens on for the proxy (PRD FR-NET).
+/// Refused as a host port, because the two relays would collide.
+pub const PROXY_RELAY_PORT: u16 = 3128;
+
 /// An empty user policy: defaults only.
 #[must_use]
 pub fn empty_user_policy() -> PolicyFile {
@@ -478,6 +508,7 @@ pub fn empty_user_policy() -> PolicyFile {
         mode: None,
         rules: BTreeMap::new(),
         allow: BTreeSet::new(),
+        host_ports: BTreeSet::new(),
     }
 }
 
@@ -1072,6 +1103,39 @@ mod tests {
         changed
             .allow
             .insert(HostPort::parse("api.example.com:443")?);
+        assert_ne!(base.hash(), changed.hash());
+        Ok(())
+    }
+
+    #[test]
+    fn host_ports_are_read_from_the_user_policy() -> TestResult {
+        let user = file("version = 1\n[network]\nhost_ports = [5432, 3306]\n");
+        assert!(user.host_ports.contains(&5432));
+        assert!(user.host_ports.contains(&3306));
+        assert_eq!(user.host_ports.len(), 2);
+        assert!(Effective::from_user(&user).host_ports.contains(&5432));
+        Ok(())
+    }
+
+    #[test]
+    fn port_zero_and_the_proxy_relay_port_are_refused_as_host_ports() {
+        for port in ["0", "3128"] {
+            let text = format!("version = 1\n[network]\nhost_ports = [{port}]\n");
+            assert!(PolicyFile::parse(&text).is_err(), "{port} accepted");
+        }
+    }
+
+    #[test]
+    fn a_repo_policy_cannot_add_host_ports() {
+        let text = "version = 1\n[network]\nhost_ports = [5432]\n";
+        assert!(PolicyFile::parse_repo(text).is_err());
+    }
+
+    #[test]
+    fn the_policy_hash_changes_when_the_host_ports_change() -> TestResult {
+        let base = Effective::from_user(&empty_user_policy());
+        let mut changed = base.clone();
+        changed.host_ports.insert(5432);
         assert_ne!(base.hash(), changed.hash());
         Ok(())
     }

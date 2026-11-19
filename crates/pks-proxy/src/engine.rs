@@ -26,6 +26,8 @@ pub const NET_UNKNOWN_DOMAIN: RuleId = RuleId::new("NET-UNKNOWN-DOMAIN");
 pub const NET_PRIVATE_IP: RuleId = RuleId::new("NET-PRIVATE-IP");
 /// Rule for more than 10 MB sent to one host.
 pub const NET_LARGE_UPLOAD: RuleId = RuleId::new("NET-LARGE-UPLOAD");
+/// Rule for a connection relayed to a host port the user listed (PRD FR-NET).
+pub const NET_HOST_PORT: RuleId = RuleId::new("NET-HOST-PORT");
 
 /// How long an unknown domain is held while the user is asked (PRD FR-NET).
 pub const ASK_HOLD: Duration = Duration::from_secs(20);
@@ -88,6 +90,8 @@ pub type EventSink = Arc<dyn Fn(Finding) + Send + Sync>;
 pub struct Config {
     /// Endpoints allowed without asking.
     pub allow: BTreeSet<HostPort>,
+    /// Host ports the sandbox may reach on `127.0.0.1` (PRD FR-NET).
+    pub host_ports: BTreeSet<u16>,
     /// Enforce blocks; monitor allows and reports.
     pub mode: Mode,
     pub resolver: Arc<dyn Resolver>,
@@ -261,11 +265,23 @@ impl Engine {
                 return;
             }
         };
-        if !self.permitted(&endpoint) {
-            let _ = client.write_all(&reply("403 Forbidden"));
-            return;
-        }
-        let upstream = match self.connect_checked(&endpoint) {
+        let upstream = if let Some(port) = self.listed_host_port(&endpoint) {
+            self.emit(
+                NET_HOST_PORT,
+                Severity::Notice,
+                &endpoint.to_string(),
+                format!("relayed to the host's 127.0.0.1:{port}; listed in host_ports"),
+                "Remove the port from [network] host_ports in your policy.toml to stop relaying it.",
+            );
+            self.connect_host_port(port)
+        } else {
+            if !self.permitted(&endpoint) {
+                let _ = client.write_all(&reply("403 Forbidden"));
+                return;
+            }
+            self.connect_checked(&endpoint)
+        };
+        let upstream = match upstream {
             Ok(upstream) => upstream,
             Err(status) => {
                 let _ = client.write_all(&reply(status));
@@ -281,6 +297,22 @@ impl Engine {
         relay(client, upstream, &endpoint, &self.config.events);
     }
 
+    /// The port of `endpoint` when it is `127.0.0.1:<port>` and `<port>` is
+    /// listed. Only that exact address is a host port, so `localhost` and
+    /// every other loopback address still follow the normal rules.
+    fn listed_host_port(&self, endpoint: &HostPort) -> Option<u16> {
+        let port = endpoint.port();
+        (endpoint.host() == "127.0.0.1" && self.config.host_ports.contains(&port)).then_some(port)
+    }
+    /// Dials the host's own loopback at a listed port. Only called after
+    /// `listed_host_port` said yes.
+    fn connect_host_port(&self, port: u16) -> Result<TcpStream, &'static str> {
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        self.config
+            .dialer
+            .dial(addr, CONNECT_TIMEOUT)
+            .map_err(|_| "502 Bad Gateway")
+    }
     /// Resolves, refuses non-public addresses, and dials the first address
     /// that answers. The dialed address is the one that was checked, so a
     /// second resolution cannot change it (DNS rebinding).
@@ -462,6 +494,7 @@ mod tests {
             .collect();
         let config = Config {
             allow,
+            host_ports: BTreeSet::new(),
             mode,
             resolver: Arc::new(FixedResolver(resolved)),
             dialer: Arc::new(RedirectDialer(upstream)),
@@ -800,6 +833,77 @@ mod tests {
             .collect();
         assert_eq!(uploads.len(), 1, "{findings:?}");
         assert_eq!(uploads[0].severity, Severity::Warn);
+        Ok(())
+    }
+
+    /// Records every address dialed, and connects each one to `upstream`.
+    struct LoopbackRecorder {
+        seen: Arc<StdMutex<Vec<SocketAddr>>>,
+        upstream: SocketAddr,
+    }
+    impl Dialer for LoopbackRecorder {
+        fn dial(&self, addr: SocketAddr, timeout: Duration) -> io::Result<TcpStream> {
+            if let Ok(mut seen) = self.seen.lock() {
+                seen.push(addr);
+            }
+            TcpStream::connect_timeout(&self.upstream, timeout)
+        }
+    }
+
+    fn host_port_engine(
+        ports: &[u16],
+        upstream: SocketAddr,
+    ) -> (Engine, Log, Arc<StdMutex<Vec<SocketAddr>>>) {
+        let (sink, log) = events();
+        let seen = Arc::new(StdMutex::new(Vec::new()));
+        let config = Config {
+            allow: BTreeSet::new(),
+            host_ports: ports.iter().copied().collect(),
+            mode: Mode::Enforce,
+            resolver: Arc::new(FixedResolver(vec![public()])),
+            dialer: Arc::new(LoopbackRecorder {
+                seen: Arc::clone(&seen),
+                upstream,
+            }),
+            asker: Arc::new(Scripted(None)),
+            events: sink,
+            hold: ASK_HOLD,
+        };
+        (Engine::new(config), log, seen)
+    }
+
+    #[test]
+    fn a_listed_host_port_is_dialed_on_loopback_and_reported_as_a_notice() -> io::Result<()> {
+        let upstream = upstream_server()?;
+        let (engine, log, seen) = host_port_engine(&[5432], upstream);
+        let status = run(&engine, b"CONNECT 127.0.0.1:5432 HTTP/1.1\r\n\r\n")?;
+        assert!(status.starts_with("HTTP/1.1 200"), "{status}");
+        let dialed = seen.lock().map(|v| v.clone()).unwrap_or_default();
+        assert_eq!(dialed, vec![SocketAddr::from(([127, 0, 0, 1], 5432))]);
+        let log = log.lock().map(|v| v.clone()).unwrap_or_default();
+        assert_eq!(log.len(), 1);
+        assert_eq!(log[0].rule.as_str(), "NET-HOST-PORT");
+        assert_eq!(log[0].severity, Severity::Notice);
+        Ok(())
+    }
+
+    #[test]
+    fn a_loopback_port_that_is_not_listed_is_refused() -> io::Result<()> {
+        let upstream = upstream_server()?;
+        let (engine, _, seen) = host_port_engine(&[5432], upstream);
+        let status = run(&engine, b"CONNECT 127.0.0.1:6379 HTTP/1.1\r\n\r\n")?;
+        assert!(status.starts_with("HTTP/1.1 403"), "{status}");
+        assert!(seen.lock().map(|v| v.is_empty()).unwrap_or(false));
+        Ok(())
+    }
+
+    #[test]
+    fn localhost_with_a_listed_port_number_is_not_a_host_port() -> io::Result<()> {
+        let upstream = upstream_server()?;
+        let (engine, _, seen) = host_port_engine(&[5432], upstream);
+        let status = run(&engine, b"CONNECT localhost:5432 HTTP/1.1\r\n\r\n")?;
+        assert!(status.starts_with("HTTP/1.1 403"), "{status}");
+        assert!(seen.lock().map(|v| v.is_empty()).unwrap_or(false));
         Ok(())
     }
 }

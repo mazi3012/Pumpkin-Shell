@@ -9,6 +9,10 @@ use std::path::{Path, PathBuf};
 
 use crate::SandboxError;
 
+/// The port of the in-sandbox proxy relay. Must match
+/// `pks_core::policy::PROXY_RELAY_PORT`, which refuses it as a host port.
+const PROXY_RELAY_PORT: u16 = 3128;
+
 /// Where the host keeps things the IDE must never see. Filled in by the
 /// caller from the real environment (or by tests from temp dirs).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +56,9 @@ pub struct LaunchSpec {
     /// Unix socket of the egress proxy (Phase 9). The IDE reaches it through
     /// a relay inside the sandbox; it is the only route out.
     pub proxy_socket: PathBuf,
+    /// Host ports the IDE may reach on its own loopback (PRD FR-NET,
+    /// scenario 7). Relayed to the host's `127.0.0.1` by the proxy.
+    pub host_ports: Vec<u16>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -162,6 +169,13 @@ pub fn check(spec: &LaunchSpec) -> Result<(), SandboxError> {
         )));
     }
 
+    for port in &spec.host_ports {
+        if *port == 0 || *port == PROXY_RELAY_PORT {
+            return Err(refuse(format!(
+                "host port {port} cannot be relayed (0 is not a port; {PROXY_RELAY_PORT} is the proxy relay)"
+            )));
+        }
+    }
     let (width, height) = spec.display_size;
     if !(320..=8192).contains(&width) || !(240..=8192).contains(&height) {
         return Err(refuse(
@@ -237,6 +251,7 @@ mod tests {
                 roots: Roots { home, config, data },
                 display_size: (1280, 800),
                 proxy_socket: proxy.clone(),
+                host_ports: Vec::new(),
             };
             Ok(Self { _dir: dir, spec })
         }
@@ -413,6 +428,28 @@ mod tests {
             binary: PathBuf::from("/usr/bin/sh"),
         };
         assert!(check(&host.spec).is_ok(), "{:?}", check(&host.spec));
+        Ok(())
+    }
+
+    #[test]
+    fn a_listed_host_port_other_than_the_proxy_relay_is_accepted() -> TestResult {
+        let mut host = Host::new()?;
+        host.spec.host_ports = vec![5432];
+        // The fake install is not under /usr, so the generic checks may
+        // refuse for another reason. The host port itself must not be why.
+        if let Err(error) = check(&host.spec) {
+            assert!(!error.to_string().contains("host port"), "{error}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn host_port_zero_and_the_proxy_relay_port_are_refused() -> TestResult {
+        for port in [0u16, 3128] {
+            let mut host = Host::new()?;
+            host.spec.host_ports = vec![port];
+            assert!(check(&host.spec).is_err(), "port {port} was accepted");
+        }
         Ok(())
     }
 }

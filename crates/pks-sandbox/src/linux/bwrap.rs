@@ -77,6 +77,8 @@ pub struct Plan {
     pub init_exe: PathBuf,
     /// Host path of the egress proxy's Unix socket.
     pub proxy_socket: PathBuf,
+    /// Host ports the IDE may reach on its loopback (PRD FR-NET).
+    pub host_ports: Vec<u16>,
 }
 
 fn push(args: &mut Vec<OsString>, values: &[&str]) {
@@ -204,6 +206,9 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
             PROXY_SOCKET_IN,
         ],
     );
+    for port in &plan.host_ports {
+        push(&mut args, &["--relay-host-port", &port.to_string()]);
+    }
     // `--` ends the init options. Everything after it is the IDE command.
     args.push(OsString::from("--"));
     args.push(plan.ide_binary.as_os_str().to_owned());
@@ -248,6 +253,7 @@ mod tests {
             group: PathBuf::from("/srv/run/group"),
             init_exe: PathBuf::from("/usr/bin/pumpkin-shell"),
             proxy_socket: PathBuf::from("/srv/run/proxy.sock"),
+            host_ports: Vec::new(),
         }
     }
 

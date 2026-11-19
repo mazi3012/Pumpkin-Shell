@@ -88,6 +88,7 @@ struct Layout {
     canary: PathBuf,
     proxy: PathBuf,
     proxy_stop: Arc<AtomicBool>,
+    host_ports: Vec<u16>,
 }
 
 impl Drop for Layout {
@@ -98,7 +99,10 @@ impl Drop for Layout {
 }
 
 /// Starts a proxy on `socket` that allows nothing and refuses every ask.
-fn start_proxy(socket: &Path) -> Result<Arc<AtomicBool>, Box<dyn std::error::Error>> {
+fn start_proxy(
+    socket: &Path,
+    host_ports: &[u16],
+) -> Result<Arc<AtomicBool>, Box<dyn std::error::Error>> {
     use pks_proxy::{Answer, Asker, Config, Engine, serve};
     struct NoAnswers;
     impl Asker for NoAnswers {
@@ -109,6 +113,7 @@ fn start_proxy(socket: &Path) -> Result<Arc<AtomicBool>, Box<dyn std::error::Err
     let listener = UnixListener::bind(socket)?;
     let config = Config {
         allow: std::collections::BTreeSet::new(),
+        host_ports: host_ports.iter().copied().collect(),
         mode: pks_core::policy::Mode::Enforce,
         resolver: Arc::new(pks_proxy::SystemResolver),
         dialer: Arc::new(pks_proxy::TcpDialer),
@@ -126,6 +131,9 @@ fn start_proxy(socket: &Path) -> Result<Arc<AtomicBool>, Box<dyn std::error::Err
 
 impl Layout {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_host_ports(&[])
+    }
+    fn with_host_ports(host_ports: &[u16]) -> Result<Self, Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let base = fs::canonicalize(root.path())?;
         let home = base.join("host-home");
@@ -140,7 +148,7 @@ impl Layout {
         fs::write(&canary, "not a secret: a file the sandbox must not read\n")?;
         fs::write(data.join("keys-marker.txt"), "data directory marker\n")?;
         let proxy = base.join("proxy.sock");
-        let proxy_stop = start_proxy(&proxy)?;
+        let proxy_stop = start_proxy(&proxy, host_ports)?;
         Ok(Self {
             _root: root,
             repo,
@@ -149,14 +157,19 @@ impl Layout {
             canary,
             proxy,
             proxy_stop,
+            host_ports: host_ports.to_vec(),
         })
     }
 
     fn spec(&self) -> LaunchSpec {
+        self.spec_running(PROBES)
+    }
+    /// The same sandbox, with `script` as the IDE's shell script.
+    fn spec_running(&self, script: &str) -> LaunchSpec {
         // /bin/sh is the IDE in these tests. It is under /usr, as a real IDE is.
         let args: Vec<OsString> = vec![
             "-c".into(),
-            PROBES.into(),
+            script.into(),
             "probe".into(),
             self.roots.home.as_os_str().to_owned(),
             self.canary.as_os_str().to_owned(),
@@ -174,6 +187,7 @@ impl Layout {
             roots: self.roots.clone(),
             display_size: (800, 600),
             proxy_socket: self.proxy.clone(),
+            host_ports: self.host_ports.clone(),
         }
     }
 }
@@ -202,6 +216,54 @@ fn every_isolation_probe_passes_inside_the_real_sandbox() -> TestResult {
     // Every probe ran: the file has one line per check.
     let lines = text.lines().count();
     assert!(lines >= 25, "only {lines} probes ran:\n{text}");
+    Ok(())
+}
+
+/// Two free loopback ports. Each listener is kept open by the caller.
+fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
+
+/// A host service that answers every connection with `pks-host-ok`.
+fn host_service(listener: std::net::TcpListener) {
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            use std::io::{Read, Write};
+            let mut buffer = [0u8; 512];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\npks-host-ok",
+            );
+        }
+    });
+}
+
+#[test]
+fn a_listed_host_port_reaches_the_host_service_and_an_unlisted_one_does_not() -> TestResult {
+    let (service, listed) = bound_loopback()?;
+    host_service(service);
+    // Bound and then released: nothing listens on it, so it is unlisted.
+    let (unlisted_guard, unlisted) = bound_loopback()?;
+    drop(unlisted_guard);
+    let layout = Layout::with_host_ports(&[listed])?;
+    let script = format!(
+        r#"out=/workspace/probe-results.txt
+: > "$out"
+if curl -s -m 5 http://127.0.0.1:{listed}/ | grep -q pks-host-ok; then echo "PASS listed host port reaches the host service" >> "$out"; else echo "FAIL listed host port reaches the host service" >> "$out"; fi
+if curl -s -m 3 http://127.0.0.1:{unlisted}/ >/dev/null 2>&1; then echo "FAIL unlisted port answered" >> "$out"; else echo "PASS unlisted port does not answer" >> "$out"; fi
+grep -q '^FAIL' "$out" && exit 1
+exit 0
+"#
+    );
+    let status = backend()?.run(&layout.spec_running(&script))?;
+    let text = results(&layout.repo);
+    assert!(
+        status.success() && !text.contains("FAIL"),
+        "exit {status}; results:\n{text}"
+    );
+    assert_eq!(text.lines().count(), 2, "{text}");
     Ok(())
 }
 

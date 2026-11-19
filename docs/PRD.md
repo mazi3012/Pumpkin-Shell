@@ -158,6 +158,7 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 | NET-PRIVATE-IP | HIGH; block |
 | NET-DIRECT-CONNECT | WARN, with fix hint |
 | NET-LARGE-UPLOAD (>10 MB to a non-model-API host) | WARN |
+| NET-HOST-PORT (a connection relayed to a host port listed in `[network] host_ports`) | NOTICE |
 | NET-DECOY-EGRESS | CRITICAL |
 | FS-DECOY-READ | HIGH |
 | WS-PROTECTED-WRITE | HIGH; staged |
