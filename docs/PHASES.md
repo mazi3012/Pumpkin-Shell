@@ -228,10 +228,10 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 9.4. [x] Unknown hosts are held for `ASK_HOLD` (20 s) and asked through the `Asker`; no answer or "deny" is refused; monitor mode allows and reports `NET-UNKNOWN-DOMAIN`. The terminal prompt in `ide` is not yet tested on a live terminal.
 9.5. [ ] Not done: optional `host_ports` relays. The policy has no field for them yet, so nothing reads it. Decide before Phase 9 closes whether to add it now or move it to a later phase.
 9.6. [~] `NET-LARGE-UPLOAD` (WARN above 10 MB per connection, test `a_large_upload_raises_one_warning`). Limit: the count is per connection, not per host, and there is no exemption for model-API hosts yet.
-9.7. [ ] Kiro profile with its exact domains. Needs a signed-in Kiro run in monitor mode, which only the user can do. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
+9.7. [x] Kiro IDE allowlist. Source: kiro.dev/docs/privacy-and-security/firewalls ("required by all Kiro products" and "every Kiro IDE installation" lists). Confirmed on 2026-11-19 with a monitor session (`a718a3b9`, 171 entries, checkpoint verified) and an enforce session (`b440c9f8`): sign-in persisted, two chat messages answered, zero blocked or monitored hosts. Eight entries: `app.kiro.dev`, `assets.app.kiro.dev`, `prod.us-east-1.auth.desktop.kiro.dev`, `prod.download.desktop.kiro.dev`, `runtime.us-east-1.kiro.dev`, `management.us-east-1.kiro.dev`, `telemetry.us-east-1.kiro.dev`, `q.us-east-1.amazonaws.com`. The last one is required by the vendor but was not seen in our sessions. Not on the profile: Chromium and Firefox background hosts, `kiro-prod-us-east-1.auth.us-east-1.amazoncognito.com` and `*.shortbread.aws.dev` (not in the IDE list).
 
 **Done when:**
-- [ ] Kiro chat works through the proxy. Blocked on 9.7 and on a signed-in Kiro.
+- [x] Kiro chat works through the proxy: enforce-mode session `b440c9f8`, signed in with the sandbox home, two chat replies, no blocked entries.
 - [~] An unknown domain triggers the ask prompt. Covered by the engine tests with a fake asker. Not yet seen on a live terminal.
 - [x] A request to `169.254.169.254` is blocked: the sandbox probe `proxy refuses cloud metadata` gets `CONNECT tunnel failed, response 403` through the relay, and the direct probes show no route to it. A LAN address is refused by the engine test `an_ip_literal_on_a_private_address_is_refused_without_a_lookup`.
 
