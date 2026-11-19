@@ -35,20 +35,20 @@ description: "Egress proxy configuration for sandboxed IDE sessions. Activates w
 | NET-PRIVATE-IP | HIGH | Block |
 | NET-DIRECT-CONNECT | WARN | Logged with fix hint |
 | NET-LARGE-UPLOAD (>10MB to non-API) | WARN | Logged |
+| NET-HOST-PORT (listed `host_ports`) | NOTICE | Logged |
 
 ## Host Ports
 
-Optional relays to host services:
+Optional relays to host services (PRD FR-NET, scenario 7). Only the user's own policy may set them:
 
 ```toml
-[host_ports]
-5432 = { description = "PostgreSQL", logged = "NOTICE" }
-3306 = { description = "MySQL", logged = "NOTICE" }
+[network]
+host_ports = [5432]
 ```
 
-- Logged as NOTICE (not WARN)
-- User must configure in policy
-- Not enabled by default
+- The sandbox reaches `127.0.0.1:<port>` only for listed ports; the proxy relays to the host's `127.0.0.1:<port>`.
+- Logged as NOTICE `NET-HOST-PORT`, not WARN.
+- Not enabled by default. Port 3128 is reserved for the in-sandbox proxy relay and is refused.
 
 ## Upload Byte Counters
 

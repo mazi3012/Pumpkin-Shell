@@ -19,6 +19,24 @@ pub const WORKSPACE: &str = "/workspace";
 pub const SANDBOX_HOME: &str = "/home/sandbox";
 /// Where the Xauthority cookie appears inside the sandbox.
 pub const XAUTHORITY_IN: &str = "/tmp/.pks-xauthority";
+/// The proxy URL the IDE is given.
+pub const PROXY_URL: &str = "http://127.0.0.1:3128";
+/// Proxy variables set in the IDE environment. Lowercase and uppercase are
+/// both set, as tools differ.
+pub const PROXY_ENV: [&str; 6] = [
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+];
+/// Hosts that bypass the proxy (loopback only).
+pub const NO_PROXY_VALUE: &str = "localhost,127.0.0.1,::1";
+/// Where the relay listens inside the sandbox.
+pub const PROXY_LISTEN: &str = "127.0.0.1:3128";
+/// Where the proxy's socket appears inside the sandbox.
+pub const PROXY_SOCKET_IN: &str = "/run/pks/proxy.sock";
 /// Where the Pumpkin-Shell binary appears, to run the in-sandbox step.
 pub const INIT_IN: &str = "/run/pks/pumpkin-shell";
 /// The only environment variables the IDE gets (PRD §6.1, "filtered env").
@@ -57,6 +75,10 @@ pub struct Plan {
     pub group: PathBuf,
     /// Host path of the Pumpkin-Shell binary (the in-sandbox step).
     pub init_exe: PathBuf,
+    /// Host path of the egress proxy's Unix socket.
+    pub proxy_socket: PathBuf,
+    /// Host ports the IDE may reach on its loopback (PRD FR-NET).
+    pub host_ports: Vec<u16>,
 }
 
 fn push(args: &mut Vec<OsString>, values: &[&str]) {
@@ -131,6 +153,9 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     push_path(&mut args, "--ro-bind", &plan.xauthority, XAUTHORITY_IN);
     // The Pumpkin-Shell binary, for the in-sandbox step before the IDE runs.
     push_path(&mut args, "--ro-bind", &plan.init_exe, INIT_IN);
+    // The egress proxy's socket. The IDE reaches it through the relay on
+    // loopback; there is no other route out (the network is unshared).
+    push_path(&mut args, "--ro-bind", &plan.proxy_socket, PROXY_SOCKET_IN);
     // The environment: nothing but the allowlist.
     let display = format!(":{}", plan.display);
     push(&mut args, &["--setenv", "HOME", SANDBOX_HOME]);
@@ -141,6 +166,16 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     push(&mut args, &["--setenv", "TERM", "xterm-256color"]);
     push(&mut args, &["--setenv", "DISPLAY", &display]);
     push(&mut args, &["--setenv", "XAUTHORITY", XAUTHORITY_IN]);
+    // Apps that honor proxy variables (Kiro does) send their traffic through
+    // the relay. Lowercase and uppercase are both set, as tools differ.
+    for name in PROXY_ENV {
+        let value = if name.to_ascii_lowercase().starts_with("no_proxy") {
+            NO_PROXY_VALUE
+        } else {
+            PROXY_URL
+        };
+        push(&mut args, &["--setenv", name, value]);
+    }
     push(&mut args, &["--chdir", WORKSPACE]);
 
     // The in-sandbox step: Landlock and the seccomp filter, then exec the IDE.
@@ -150,7 +185,30 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
         push(&mut args, &[flag, path]);
     }
     push(&mut args, &["--ro", "/usr", "--ro", "/etc", "--ro", "/sys"]);
-    push(&mut args, &["--ro", INIT_IN, "--ro", XAUTHORITY_IN]);
+    push(
+        &mut args,
+        &[
+            "--ro",
+            INIT_IN,
+            "--ro",
+            XAUTHORITY_IN,
+            "--ro",
+            PROXY_SOCKET_IN,
+        ],
+    );
+    // The relay runs inside the sandbox, before the IDE: loopback to the proxy.
+    push(
+        &mut args,
+        &[
+            "--relay-listen",
+            PROXY_LISTEN,
+            "--relay-socket",
+            PROXY_SOCKET_IN,
+        ],
+    );
+    for port in &plan.host_ports {
+        push(&mut args, &["--relay-host-port", &port.to_string()]);
+    }
     // `--` ends the init options. Everything after it is the IDE command.
     args.push(OsString::from("--"));
     args.push(plan.ide_binary.as_os_str().to_owned());
@@ -194,6 +252,8 @@ mod tests {
             passwd: PathBuf::from("/srv/run/passwd"),
             group: PathBuf::from("/srv/run/group"),
             init_exe: PathBuf::from("/usr/bin/pumpkin-shell"),
+            proxy_socket: PathBuf::from("/srv/run/proxy.sock"),
+            host_ports: Vec::new(),
         }
     }
 
@@ -260,7 +320,7 @@ mod tests {
         assert_eq!(names.len(), set.len());
         for name in &names {
             assert!(
-                ENV_ALLOWLIST.contains(name) || *name == "PWD",
+                ENV_ALLOWLIST.contains(name) || PROXY_ENV.contains(name) || *name == "PWD",
                 "{name} is not in the allowlist"
             );
         }

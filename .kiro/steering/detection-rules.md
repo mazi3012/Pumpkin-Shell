@@ -29,6 +29,7 @@ Source of truth: PRD §7 FR-DET (#[[file:docs/PRD.md]]). If this file and the PR
 | NET-PRIVATE-IP | Destination resolves to private, link-local or metadata address | HIGH | Block |
 | NET-DIRECT-CONNECT | Connection that bypasses the proxy | WARN | Alert with fix hint (e.g. `host_ports = [5432]`) |
 | NET-LARGE-UPLOAD | > 10 MB uploaded to a non-model-API host | WARN | Alert only |
+| NET-HOST-PORT | Connection relayed to a host port listed in `[network] host_ports` | NOTICE | Logged |
 | NET-DECOY-EGRESS | A decoy marker leaves the sandbox | CRITICAL | Alert (CRITICAL action applies) |
 | FS-DECOY-READ | A decoy file is read | HIGH | Alert only |
 | WS-PROTECTED-WRITE | Write to a protected path | HIGH | Staged for review |

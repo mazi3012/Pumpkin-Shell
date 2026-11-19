@@ -21,13 +21,14 @@
 //! Only the rules in [`CONFIGURABLE_RULES`] can be set. Unknown keys and
 //! unknown rule IDs are errors, so a typo cannot silently do nothing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, Read};
 use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::net::HostPort;
 use crate::trust::TrustState;
 use crate::{Finding, RuleId, Severity, hex};
 
@@ -135,6 +136,18 @@ struct RawPolicy {
     mode: Option<Mode>,
     #[serde(default)]
     rules: BTreeMap<String, RawRule>,
+    network: Option<RawNetwork>,
+}
+
+/// `[network]` in the user policy: exact `host:port` endpoints the IDE may
+/// reach through the proxy without asking (PRD FR-NET).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawNetwork {
+    #[serde(default)]
+    allow: Vec<String>,
+    #[serde(default)]
+    host_ports: Vec<u16>,
 }
 
 #[derive(Deserialize)]
@@ -148,6 +161,11 @@ struct RawRule {
 pub struct PolicyFile {
     pub mode: Option<Mode>,
     pub rules: BTreeMap<RuleId, Action>,
+    /// Endpoints allowed without asking. Only the user policy may set them.
+    pub allow: BTreeSet<HostPort>,
+    /// Host ports the sandbox may reach on the host's loopback (PRD FR-NET,
+    /// scenario 7). Only the user policy may set them.
+    pub host_ports: BTreeSet<u16>,
 }
 
 impl PolicyFile {
@@ -157,10 +175,54 @@ impl PolicyFile {
     /// Fails on bad TOML, an unsupported version, an unknown key, an unknown
     /// rule ID or an unknown value.
     pub fn parse(text: &str) -> Result<Self, PolicyError> {
+        parse_with(text, true)
+    }
+
+    /// Parses a repo policy. The same schema, except `[network]`: a repo
+    /// policy cannot add endpoints, because it is written by whoever wrote
+    /// the repo.
+    ///
+    /// # Errors
+    /// The same as [`PolicyFile::parse`], plus any `[network]` section.
+    pub fn parse_repo(text: &str) -> Result<Self, PolicyError> {
+        parse_with(text, false)
+    }
+}
+
+fn parse_with(text: &str, allow_network: bool) -> Result<PolicyFile, PolicyError> {
+    {
         let raw: RawPolicy =
             toml::from_str(text).map_err(|error| PolicyError::Invalid(error.to_string()))?;
         if raw.version != POLICY_VERSION {
             return Err(PolicyError::Version(raw.version));
+        }
+        let mut allow = BTreeSet::new();
+        let mut host_ports = BTreeSet::new();
+        if let Some(network) = raw.network {
+            if !allow_network {
+                return Err(PolicyError::Invalid(
+                    "a repo policy cannot set [network]: only your own policy.toml may allow endpoints"
+                        .to_owned(),
+                ));
+            }
+            for entry in network.allow {
+                let endpoint = HostPort::parse(&entry)
+                    .map_err(|error| PolicyError::Invalid(error.to_string()))?;
+                allow.insert(endpoint);
+            }
+            for port in network.host_ports {
+                if port == 0 {
+                    return Err(PolicyError::Invalid(
+                        "host_ports: port 0 is not a port".to_owned(),
+                    ));
+                }
+                if port == PROXY_RELAY_PORT {
+                    return Err(PolicyError::Invalid(format!(
+                        "host_ports: {PROXY_RELAY_PORT} is used by the sandbox's proxy relay"
+                    )));
+                }
+                host_ports.insert(port);
+            }
         }
         let mut rules = BTreeMap::new();
         for (name, rule) in raw.rules {
@@ -173,9 +235,11 @@ impl PolicyFile {
             })?;
             rules.insert(id, rule.action);
         }
-        Ok(Self {
+        Ok(PolicyFile {
             mode: raw.mode,
             rules,
+            allow,
+            host_ports,
         })
     }
 }
@@ -185,6 +249,10 @@ impl PolicyFile {
 pub struct Effective {
     pub mode: Mode,
     pub actions: BTreeMap<RuleId, Action>,
+    /// Endpoints allowed without asking, from the user policy.
+    pub allow: BTreeSet<HostPort>,
+    /// Host ports reachable on the host's loopback, from the user policy.
+    pub host_ports: BTreeSet<u16>,
 }
 
 impl Effective {
@@ -197,6 +265,8 @@ impl Effective {
         Self {
             mode: user.mode.unwrap_or(Mode::Enforce),
             actions,
+            allow: user.allow.clone(),
+            host_ports: user.host_ports.clone(),
         }
     }
 
@@ -207,6 +277,12 @@ impl Effective {
         let mut text = format!("pumpkin-shell-policy-v1\nmode={}\n", self.mode.as_str());
         for (id, action) in &self.actions {
             text.push_str(&format!("{}={}\n", id.as_str(), action.as_str()));
+        }
+        for endpoint in &self.allow {
+            text.push_str(&format!("allow={endpoint}\n"));
+        }
+        for port in &self.host_ports {
+            text.push_str(&format!("host_port={port}\n"));
         }
         hex::sha256(text.as_bytes())
     }
@@ -322,7 +398,7 @@ pub fn resolve(user: &PolicyFile, repo: Option<&RepoPolicyFile>, trust: TrustSta
     }
     let parsed = std::str::from_utf8(&repo.bytes)
         .map_err(|_| PolicyError::Invalid("not valid UTF-8".to_owned()))
-        .and_then(PolicyFile::parse);
+        .and_then(PolicyFile::parse_repo);
     match parsed {
         Ok(file) => {
             let (effective, findings) = merge(user, &file);
@@ -421,12 +497,18 @@ pub fn read_user_policy(config_dir: &Path) -> Result<Option<PolicyFile>, PolicyE
     PolicyFile::parse(&text).map(Some)
 }
 
+/// The port the in-sandbox relay listens on for the proxy (PRD FR-NET).
+/// Refused as a host port, because the two relays would collide.
+pub const PROXY_RELAY_PORT: u16 = 3128;
+
 /// An empty user policy: defaults only.
 #[must_use]
 pub fn empty_user_policy() -> PolicyFile {
     PolicyFile {
         mode: None,
         rules: BTreeMap::new(),
+        allow: BTreeSet::new(),
+        host_ports: BTreeSet::new(),
     }
 }
 
@@ -979,6 +1061,82 @@ mod tests {
             fs::set_permissions(&path, fs::Permissions::from_mode(mode))?;
             assert!(read_user_policy(dir.path()).is_ok(), "{mode:o}");
         }
+        Ok(())
+    }
+
+    #[test]
+    fn the_user_policy_may_allow_exact_endpoints() -> TestResult {
+        let user = file("version = 1\n[network]\nallow = [\"API.Example.com:443\"]\n");
+        let effective = Effective::from_user(&user);
+        let wanted = HostPort::parse("api.example.com:443")?;
+        assert!(effective.allow.contains(&wanted));
+        Ok(())
+    }
+
+    #[test]
+    fn a_wildcard_endpoint_in_the_user_policy_is_an_error() {
+        let text = "version = 1\n[network]\nallow = [\"*.amazonaws.com:443\"]\n";
+        assert!(PolicyFile::parse(text).is_err());
+    }
+
+    #[test]
+    fn a_repo_policy_cannot_add_endpoints() {
+        let text = "version = 1\n[network]\nallow = [\"evil.example.com:443\"]\n";
+        let error = PolicyFile::parse_repo(text).err();
+        assert!(
+            matches!(&error, Some(PolicyError::Invalid(message)) if message.contains("[network]")),
+            "{error:?}"
+        );
+    }
+
+    #[test]
+    fn a_repo_policy_without_network_parses() -> TestResult {
+        let repo = PolicyFile::parse_repo("version = 1\nmode = \"enforce\"\n")?;
+        assert!(repo.allow.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn the_policy_hash_changes_when_the_allowlist_changes() -> TestResult {
+        let base = Effective::from_user(&empty_user_policy());
+        let mut changed = base.clone();
+        changed
+            .allow
+            .insert(HostPort::parse("api.example.com:443")?);
+        assert_ne!(base.hash(), changed.hash());
+        Ok(())
+    }
+
+    #[test]
+    fn host_ports_are_read_from_the_user_policy() -> TestResult {
+        let user = file("version = 1\n[network]\nhost_ports = [5432, 3306]\n");
+        assert!(user.host_ports.contains(&5432));
+        assert!(user.host_ports.contains(&3306));
+        assert_eq!(user.host_ports.len(), 2);
+        assert!(Effective::from_user(&user).host_ports.contains(&5432));
+        Ok(())
+    }
+
+    #[test]
+    fn port_zero_and_the_proxy_relay_port_are_refused_as_host_ports() {
+        for port in ["0", "3128"] {
+            let text = format!("version = 1\n[network]\nhost_ports = [{port}]\n");
+            assert!(PolicyFile::parse(&text).is_err(), "{port} accepted");
+        }
+    }
+
+    #[test]
+    fn a_repo_policy_cannot_add_host_ports() {
+        let text = "version = 1\n[network]\nhost_ports = [5432]\n";
+        assert!(PolicyFile::parse_repo(text).is_err());
+    }
+
+    #[test]
+    fn the_policy_hash_changes_when_the_host_ports_change() -> TestResult {
+        let base = Effective::from_user(&empty_user_policy());
+        let mut changed = base.clone();
+        changed.host_ports.insert(5432);
+        assert_ne!(base.hash(), changed.hash());
         Ok(())
     }
 }

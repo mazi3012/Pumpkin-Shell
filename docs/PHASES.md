@@ -17,8 +17,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
-| 8 | Linux `ide` backend | T6 | Linux | | in-progress (code and tests done, local checks pass; Kiro reaches its sign-in screen; PR not yet open) |
-| 9 | Egress proxy | T7 | Both | | todo |
+| 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
+| 9 | Egress proxy | T7 | Both | | in-progress (code complete, branch `phase-9-egress-proxy`; PR not opened, push blocked) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
@@ -222,18 +222,20 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 
 **Goal:** the only network path out of the sandbox. Adds crate `pks-proxy`.
 
-9.1. Host proxy on a Unix socket, with a relay inside the sandbox on loopback.
-9.2. HTTP CONNECT allowlist of exact `host:port`. Reject wildcards over shared cloud domains (`*.amazonaws.com`, `*.googleapis.com`, `*.blob.core.windows.net`).
-9.3. Proxy resolves DNS itself; refuses private, link-local and metadata addresses (`NET-PRIVATE-IP`).
-9.4. Unknown domains: hold 20 s and ask allow / always / deny (`NET-UNKNOWN-DOMAIN`); deny when headless.
-9.5. Optional `host_ports` relays, logged as NOTICE.
-9.6. Per-host upload byte counters (`NET-LARGE-UPLOAD` above 10 MB to a non-model-API host).
-9.7. Kiro profile with its exact domains, confirmed in monitor mode. Kiro honors `HTTP_PROXY`, `HTTPS_PROXY` and `NO_PROXY` (kiro.dev docs). Sign-in also needs the hosts behind `app.kiro.dev`, which are not yet known.
+9.1. [x] Host proxy on a Unix socket, with a relay inside the sandbox on loopback (`pumpkin-shell sandbox-relay` on `127.0.0.1:3128`, started by `sandbox-init` before the seccomp filter).
+9.2. [x] HTTP CONNECT allowlist of exact `host:port`. Wildcards are refused by `HostPort::parse` (tests in `pks-core`) and in the user policy `[network]` (test `a_wildcard_endpoint_in_the_user_policy_is_an_error`). A repo policy cannot add endpoints (`parse_repo` refuses `[network]`).
+9.3. [x] Proxy resolves DNS itself, checks every resolved address, and dials the checked address. Refused: private, loopback, link-local, unspecified, multicast, documentation, CGNAT and metadata addresses (`addr.rs`, tests in `pks-proxy`).
+9.4. [x] Unknown hosts are held for `ASK_HOLD` (20 s) and asked through the `Asker`; no answer or "deny" is refused; monitor mode allows and reports `NET-UNKNOWN-DOMAIN`. The terminal prompt in `ide` is not yet tested on a live terminal.
+9.5. [x] Optional `host_ports` relays. Set in the user policy only: `[network] host_ports = [5432]`. The sandbox listens on `127.0.0.1:<port>` for each listed port and sends `CONNECT 127.0.0.1:<port>` to the proxy. The proxy dials only that exact loopback address and only for listed ports, and logs `NET-HOST-PORT` as NOTICE. Port 0 and 3128 are refused. Tests: engine (listed port dialed on loopback and reported; unlisted loopback port and `localhost` refused), relay unit tests (CONNECT sent, bytes copied, refusal closes), policy tests, and one real sandbox test (a host service on a listed port answers inside the sandbox, an unlisted port does not).
+9.6. [~] `NET-LARGE-UPLOAD` (WARN above 10 MB per connection, test `a_large_upload_raises_one_warning`). Limit: the count is per connection, not per host, and there is no exemption for model-API hosts yet.
+9.7. [x] Kiro IDE allowlist. Source: kiro.dev/docs/privacy-and-security/firewalls ("required by all Kiro products" and "every Kiro IDE installation" lists). Confirmed on 2026-11-19 with a monitor session (`a718a3b9`, 171 entries, checkpoint verified) and an enforce session (`b440c9f8`): sign-in persisted, two chat messages answered, zero blocked or monitored hosts. Eight entries: `app.kiro.dev`, `assets.app.kiro.dev`, `prod.us-east-1.auth.desktop.kiro.dev`, `prod.download.desktop.kiro.dev`, `runtime.us-east-1.kiro.dev`, `management.us-east-1.kiro.dev`, `telemetry.us-east-1.kiro.dev`, `q.us-east-1.amazonaws.com`. The last one is required by the vendor but was not seen in our sessions. Not on the profile: Chromium and Firefox background hosts, `kiro-prod-us-east-1.auth.us-east-1.amazoncognito.com` and `*.shortbread.aws.dev` (not in the IDE list).
 
 **Done when:**
-- Kiro chat works through the proxy.
-- An unknown domain triggers the ask prompt.
-- A request to `169.254.169.254` or a LAN address is blocked.
+- [x] Kiro chat works through the proxy: enforce-mode session `b440c9f8`, signed in with the sandbox home, two chat replies, no blocked entries.
+- [~] An unknown domain triggers the ask prompt. The engine asks through the `Asker` (engine tests with a fake asker), and the terminal prompt parses its answers (`ide::tests`: once/session allow, deny, empty line and end of input deny). A live prompt was not triggered: with the Kiro allowlist in enforce mode, Kiro did not contact an unlisted host in a 240 s run. Left open until a live run shows the prompt.
+- [x] A request to `169.254.169.254` is blocked: the sandbox probe `proxy refuses cloud metadata` gets `CONNECT tunnel failed, response 403` through the relay, and the direct probes show no route to it. A LAN address is refused by the engine test `an_ip_literal_on_a_private_address_is_refused_without_a_lookup`.
+
+Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pull request.
 
 ---
 

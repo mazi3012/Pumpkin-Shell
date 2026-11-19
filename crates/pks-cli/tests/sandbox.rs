@@ -12,6 +12,9 @@ use std::process::{Command, Output};
 
 use pks_sandbox::linux::LinuxBackend;
 use pks_sandbox::{IdeInstall, LaunchSpec, Roots, SandboxBackend};
+use std::os::unix::net::UnixListener;
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -32,7 +35,7 @@ check "IDE home is writable" sh -c 'touch /home/sandbox/.pks-probe && rm /home/s
 check "/tmp is writable" sh -c 'touch /tmp/.pks-probe && rm /tmp/.pks-probe'
 check "running with no_new_privs" grep -q '^NoNewPrivs:[[:space:]]*1' /proc/self/status
 check "seccomp filter is installed" grep -q '^Seccomp:[[:space:]]*2' /proc/self/status
-check "environment is the allowlist" sh -c 'env | cut -d= -f1 | grep -vxE "HOME|USER|SHELL|PATH|LANG|TERM|DISPLAY|XAUTHORITY|PWD|SHLVL|OLDPWD|_" | grep -q . && exit 1; exit 0'
+check "environment is the allowlist" sh -c 'env | cut -d= -f1 | grep -vxE "HOME|USER|SHELL|PATH|LANG|TERM|DISPLAY|XAUTHORITY|PWD|SHLVL|OLDPWD|_|HTTP_PROXY|HTTPS_PROXY|http_proxy|https_proxy|NO_PROXY|no_proxy" | grep -q . && exit 1; exit 0'
 check "only the nested display socket is visible" sh -c 'test "$(ls /tmp/.X11-unix)" = "X${DISPLAY#:}"'
 check "nested display answers on its socket" sh -c 'test -S "/tmp/.X11-unix/X${DISPLAY#:}"'
 # What must be impossible inside the sandbox.
@@ -49,8 +52,9 @@ absent "host display :0 socket is not visible" test -e /tmp/.X11-unix/X0
 absent "/usr is not writable" touch /usr/pks-probe
 absent "/etc is not writable" touch /etc/pks-probe
 absent "the IDE install is not writable" touch /usr/bin/pks-probe
-absent "internet is unreachable (1.1.1.1)" curl -s -m 3 http://1.1.1.1/
-absent "cloud metadata is unreachable (169.254.169.254)" curl -s -m 3 http://169.254.169.254/
+absent "direct internet is unreachable (1.1.1.1, proxy bypassed)" curl --noproxy '*' -s -m 3 http://1.1.1.1/
+absent "direct cloud metadata is unreachable (proxy bypassed)" curl --noproxy '*' -s -m 3 http://169.254.169.254/
+check "proxy refuses cloud metadata (169.254.169.254)" sh -c 'curl -sv -m 5 https://169.254.169.254/ 2>&1 | grep -q "CONNECT tunnel failed, response 403"'
 check "only the loopback interface exists" awk 'NR>2 { sub(/:.*/, "", $1); if ($1 != "lo") exit 1 }' /proc/net/dev
 check "own PID namespace (few processes visible)" sh -c '[ "$(ls /proc | grep -c "^[0-9]")" -lt 10 ]'
 grep -q '^FAIL' "$out" && exit 1
@@ -82,10 +86,54 @@ struct Layout {
     ide_home: PathBuf,
     roots: Roots,
     canary: PathBuf,
+    proxy: PathBuf,
+    proxy_stop: Arc<AtomicBool>,
+    host_ports: Vec<u16>,
+}
+
+impl Drop for Layout {
+    fn drop(&mut self) {
+        self.proxy_stop
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Starts a proxy on `socket` that allows nothing and refuses every ask.
+fn start_proxy(
+    socket: &Path,
+    host_ports: &[u16],
+) -> Result<Arc<AtomicBool>, Box<dyn std::error::Error>> {
+    use pks_proxy::{Answer, Asker, Config, Engine, serve};
+    struct NoAnswers;
+    impl Asker for NoAnswers {
+        fn ask(&self, _: &pks_core::net::HostPort) -> Option<Answer> {
+            None
+        }
+    }
+    let listener = UnixListener::bind(socket)?;
+    let config = Config {
+        allow: std::collections::BTreeSet::new(),
+        host_ports: host_ports.iter().copied().collect(),
+        mode: pks_core::policy::Mode::Enforce,
+        resolver: Arc::new(pks_proxy::SystemResolver),
+        dialer: Arc::new(pks_proxy::TcpDialer),
+        asker: Arc::new(NoAnswers),
+        events: Arc::new(|_| {}),
+        hold: std::time::Duration::from_secs(1),
+    };
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    std::thread::spawn(move || {
+        let _ = serve(listener, Arc::new(Engine::new(config)), flag);
+    });
+    Ok(stop)
 }
 
 impl Layout {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        Self::with_host_ports(&[])
+    }
+    fn with_host_ports(host_ports: &[u16]) -> Result<Self, Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         let base = fs::canonicalize(root.path())?;
         let home = base.join("host-home");
@@ -99,20 +147,29 @@ impl Layout {
         let canary = home.join("canary.txt");
         fs::write(&canary, "not a secret: a file the sandbox must not read\n")?;
         fs::write(data.join("keys-marker.txt"), "data directory marker\n")?;
+        let proxy = base.join("proxy.sock");
+        let proxy_stop = start_proxy(&proxy, host_ports)?;
         Ok(Self {
             _root: root,
             repo,
             ide_home,
             roots: Roots { home, config, data },
             canary,
+            proxy,
+            proxy_stop,
+            host_ports: host_ports.to_vec(),
         })
     }
 
     fn spec(&self) -> LaunchSpec {
+        self.spec_running(PROBES)
+    }
+    /// The same sandbox, with `script` as the IDE's shell script.
+    fn spec_running(&self, script: &str) -> LaunchSpec {
         // /bin/sh is the IDE in these tests. It is under /usr, as a real IDE is.
         let args: Vec<OsString> = vec![
             "-c".into(),
-            PROBES.into(),
+            script.into(),
             "probe".into(),
             self.roots.home.as_os_str().to_owned(),
             self.canary.as_os_str().to_owned(),
@@ -129,6 +186,8 @@ impl Layout {
             ide_args: args,
             roots: self.roots.clone(),
             display_size: (800, 600),
+            proxy_socket: self.proxy.clone(),
+            host_ports: self.host_ports.clone(),
         }
     }
 }
@@ -157,6 +216,54 @@ fn every_isolation_probe_passes_inside_the_real_sandbox() -> TestResult {
     // Every probe ran: the file has one line per check.
     let lines = text.lines().count();
     assert!(lines >= 25, "only {lines} probes ran:\n{text}");
+    Ok(())
+}
+
+/// Two free loopback ports. Each listener is kept open by the caller.
+fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let port = listener.local_addr()?.port();
+    Ok((listener, port))
+}
+
+/// A host service that answers every connection with `pks-host-ok`.
+fn host_service(listener: std::net::TcpListener) {
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            use std::io::{Read, Write};
+            let mut buffer = [0u8; 512];
+            let _ = stream.read(&mut buffer);
+            let _ = stream.write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\nConnection: close\r\n\r\npks-host-ok",
+            );
+        }
+    });
+}
+
+#[test]
+fn a_listed_host_port_reaches_the_host_service_and_an_unlisted_one_does_not() -> TestResult {
+    let (service, listed) = bound_loopback()?;
+    host_service(service);
+    // Bound and then released: nothing listens on it, so it is unlisted.
+    let (unlisted_guard, unlisted) = bound_loopback()?;
+    drop(unlisted_guard);
+    let layout = Layout::with_host_ports(&[listed])?;
+    let script = format!(
+        r#"out=/workspace/probe-results.txt
+: > "$out"
+if curl -s -m 5 http://127.0.0.1:{listed}/ | grep -q pks-host-ok; then echo "PASS listed host port reaches the host service" >> "$out"; else echo "FAIL listed host port reaches the host service" >> "$out"; fi
+if curl -s -m 3 http://127.0.0.1:{unlisted}/ >/dev/null 2>&1; then echo "FAIL unlisted port answered" >> "$out"; else echo "PASS unlisted port does not answer" >> "$out"; fi
+grep -q '^FAIL' "$out" && exit 1
+exit 0
+"#
+    );
+    let status = backend()?.run(&layout.spec_running(&script))?;
+    let text = results(&layout.repo);
+    assert!(
+        status.success() && !text.contains("FAIL"),
+        "exit {status}; results:\n{text}"
+    );
+    assert_eq!(text.lines().count(), 2, "{text}");
     Ok(())
 }
 

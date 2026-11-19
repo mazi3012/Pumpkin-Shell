@@ -1,0 +1,15 @@
+[package]
+name = "pks-proxy"
+description = "pumpkin-shell egress proxy: exact-host CONNECT allowlist, private-address refusal, ask prompt"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+repository.workspace = true
+
+[dependencies]
+pks-core = { path = "../pks-core", version = "0.0.0" }
+thiserror.workspace = true
+
+[lints]
+workspace = true

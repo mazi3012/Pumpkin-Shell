@@ -106,8 +106,18 @@ pub fn block_tiocsti() -> Result<(), SandboxError> {
 /// # Errors
 /// Fails before exec if either layer cannot be applied (fail closed), if the
 /// command is empty, or if exec fails.
-pub fn run(rw: &[PathBuf], ro: &[PathBuf], command: &[OsString]) -> SandboxError {
+pub fn run(
+    rw: &[PathBuf],
+    ro: &[PathBuf],
+    command: &[OsString],
+    relay: Option<&Relay>,
+) -> SandboxError {
     if let Err(error) = restrict_filesystem(rw, ro) {
+        return error;
+    }
+    if let Some(relay) = relay
+        && let Err(error) = start_relay(relay)
+    {
         return error;
     }
     if let Err(error) = block_tiocsti() {
@@ -121,4 +131,49 @@ pub fn run(rw: &[PathBuf], ro: &[PathBuf], command: &[OsString]) -> SandboxError
         context: format!("cannot run {}", PathBuf::from(program).display()),
         source: error,
     }
+}
+
+/// A relay to start before the IDE: listen address and the proxy socket.
+#[derive(Debug, Clone)]
+pub struct Relay {
+    pub listen: std::net::SocketAddr,
+    pub socket: PathBuf,
+    /// Host ports the IDE may reach on its loopback (PRD FR-NET).
+    pub host_ports: Vec<u16>,
+}
+
+/// Starts the relay as a child process and waits until it accepts
+/// connections. The child inherits the Landlock and seccomp layers, and it
+/// ends when the IDE does (the sandbox's process namespace ends with it).
+fn start_relay(relay: &Relay) -> Result<(), SandboxError> {
+    let setup = |what: &str| SandboxError::Setup(format!("relay: {what}"));
+    let exe = std::env::current_exe().map_err(|e| SandboxError::Io {
+        context: "cannot find the in-sandbox binary".to_owned(),
+        source: e,
+    })?;
+    let _child = Command::new(exe)
+        .arg("sandbox-relay")
+        .arg("--listen")
+        .arg(relay.listen.to_string())
+        .arg("--socket")
+        .arg(&relay.socket)
+        .args(
+            relay
+                .host_ports
+                .iter()
+                .flat_map(|port| ["--host-port".to_owned(), port.to_string()]),
+        )
+        .spawn()
+        .map_err(|e| SandboxError::Io {
+            context: "cannot start the relay".to_owned(),
+            source: e,
+        })?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if std::net::TcpStream::connect(relay.listen).is_ok() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(setup("it did not start listening within 5 seconds"))
 }

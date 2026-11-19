@@ -4,6 +4,7 @@
 pub mod bwrap;
 pub mod display;
 pub mod init;
+pub mod relay;
 
 use std::fs;
 use std::io::Write;
@@ -117,6 +118,8 @@ impl SandboxBackend for LinuxBackend {
             passwd,
             group,
             init_exe: self.init_exe.clone(),
+            proxy_socket: spec.proxy_socket.clone(),
+            host_ports: spec.host_ports.clone(),
         };
         let status = Command::new(&self.bwrap)
             .args(bwrap::bwrap_args(&plan))
