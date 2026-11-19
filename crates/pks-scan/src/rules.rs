@@ -403,6 +403,7 @@ impl Rule for YarnPathRule {
             return Ok(None);
         }
 
+        // Check .yarnrc.yml exists and has yarnPath
         let file_path = repo_root.join(rel_path);
         let content = fs::read_to_string(&file_path)?;
 
