@@ -1,6 +1,8 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
 mod doctor;
+mod log;
+mod policy;
 mod scan;
 
 use std::path::PathBuf;
@@ -44,6 +46,47 @@ enum Command {
         #[arg(long)]
         no_ignore: bool,
     },
+    /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
+    Trust {
+        /// Repository whose pumpkin-shell.toml to pin.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+    /// Show and check the policy that applies to a repository.
+    Policy {
+        #[command(subcommand)]
+        command: PolicyCommand,
+    },
+    /// Work with session logs.
+    Log {
+        #[command(subcommand)]
+        command: LogCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum PolicyCommand {
+    /// Print the effective policy. Exit 1 when the repo policy is not applied or tries to loosen a rule.
+    Check {
+        /// Repository to check.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
+}
+
+#[derive(Subcommand)]
+enum LogCommand {
+    /// Check a session log's chain, signatures and checkpoint. Exit 1 when it fails, 2 when it cannot be checked.
+    Verify {
+        /// The session log (.jsonl). Its checkpoint is read from `<file>.checkpoint`.
+        file: PathBuf,
+        /// Accept a log with no checkpoint (a session that may still be running).
+        #[arg(long)]
+        allow_open: bool,
+        /// Directory holding log-signing.pub (default: the pumpkin-shell data dir, under keys).
+        #[arg(long)]
+        key_dir: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -75,6 +118,18 @@ fn main() -> ExitCode {
             fail_on,
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
+        Some(Command::Trust { path }) => policy::trust(&path),
+        Some(Command::Policy {
+            command: PolicyCommand::Check { path },
+        }) => policy::check(&path),
+        Some(Command::Log {
+            command:
+                LogCommand::Verify {
+                    file,
+                    allow_open,
+                    key_dir,
+                },
+        }) => log::verify(&file, allow_open, key_dir.as_deref()),
         None => ExitCode::SUCCESS,
     }
 }

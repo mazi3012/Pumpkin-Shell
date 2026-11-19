@@ -20,15 +20,22 @@ repository = "https://github.com/mazi3012/pumpkin-shell"
 # tempfile 3.27.0 (2026-03-11), windows-sys 0.61.2 (2025-10-06; the
 # windows-rs repo had a commit on 2026-11-18). All MIT and/or Apache-2.0
 # (ignore: Unlicense OR MIT), none yanked.
+# Phase 7 additions checked 2026-11-19: ed25519-dalek 3.0.0 (2026-07-06,
+# BSD-3-Clause), sha2 0.11.1 (2026-10-12), toml 1.2.1 (2026-11-06),
+# getrandom 0.4.3 (2026-06-17). Latest stable, none yanked.
 clap = { version = "4.6.8", features = ["derive"] }
+ed25519-dalek = "3.0.0"
+getrandom = "0.4.3"
 ignore = "0.4.34"
 jsonc-parser = { version = "0.34.0", features = ["serde"] }
 landlock = "0.4.7"
 libc = "0.2.191"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
+sha2 = "0.11.1"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+toml = "1.2.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [workspace.lints.rust]

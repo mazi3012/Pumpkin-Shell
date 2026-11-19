@@ -190,16 +190,19 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 
 ### FR-POL: Policy
 - User policy: `~/.config/pumpkin-shell/policy.toml` (`%APPDATA%\Pumpkin-Shell\` on Windows), never visible inside the sandbox.
-- Repo `pumpkin-shell.toml` can only tighten. `trust` pins its hash.
+- Repo `pumpkin-shell.toml` can only tighten. `trust` pins its SHA-256 in the host data dir (never in the repo, where the policy's own author could edit it). A repo policy that is not pinned, or whose hash changed, is ignored and reported as POL-UNTRUSTED. An entry that would loosen a setting is ignored and reported as POL-UNTRUSTED; the rest of the file still applies.
+- Policy file v1: `version`, `mode` (`enforce` or `monitor`) and `[rules.<ID>] action` (`alert` < `ask` < `block`) for the configurable NET-* and REG-* rules. Unknown keys and rule IDs are errors.
 - IDE profiles: paths, exact domains (from vendor docs, confirmed in monitor mode), env keys.
 - `monitor` mode logs instead of blocking; `policy suggest` turns a monitor session into allow rules.
 
 ### FR-RCPT: Signed log
 - JSONL: `v`, `session`, `seq`, `ts`, `prev` hash, `policy_hash`, `layer`, `target`, `rule`, `verdict`, ed25519 `sig`.
-- Key stored outside the sandbox. Signed checkpoint at session end detects truncation. `log verify` checks chain, signatures, checkpoint.
+- One file per session. `ts` is Unix time in milliseconds. `prev` is the SHA-256 of the previous line, signature included. Each line is accepted only in the exact canonical form the logger writes.
+- Key stored outside the sandbox, in the host data dir (mode 0700 directory, 0600 key). Verification takes the public key from there, never from the log.
+- Signed checkpoint at session end (entry count and hash of the last line) detects truncation. A log with no checkpoint fails `log verify` unless `--allow-open` is given. `log verify` checks chain, signatures, checkpoint.
 
 ### CLI
-`doctor`, `init`, `ide <kiro|code|cursor|windsurf> [path]`, `ide import <ide>` (settings + extensions, never tokens), `watch`, `allow`, `allow-write`, `resume`, `kill`, `review`, `restore`, `scan [--ci]`, `trust`, `policy suggest`, `log [verify]`, `test`.
+`doctor`, `init`, `ide <kiro|code|cursor|windsurf> [path]`, `ide import <ide>` (settings + extensions, never tokens), `watch`, `allow`, `allow-write`, `resume`, `kill`, `review`, `restore`, `scan [--ci]`, `trust`, `policy check`, `policy suggest`, `log [verify]`, `test`.
 
 ## 8. Acceptance scenarios (each on both OSes)
 

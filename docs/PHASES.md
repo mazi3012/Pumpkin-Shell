@@ -16,7 +16,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
 | 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
-| 7 | Policy and signed log | T5 | Both | | in-progress |
+| 7 | Policy and signed log | T5 | Both | | in-progress (code done, local checks pass; PR not yet open) |
 | 8 | Linux `ide` backend | T6 | Linux | | todo |
 | 9 | Egress proxy | T7 | Both | | todo |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
@@ -181,8 +181,17 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 7.6. `pumpkin-shell log verify`: checks chain, signatures and checkpoint.
 
 **Done when:**
-- Tests show `log verify` fails after editing, deleting, reordering or truncating any line.
-- A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`.
+- [x] Tests show `log verify` fails after editing, deleting, reordering or truncating any line: every field of every line, every line deleted, every pair swapped, every tail cut, a cut in the middle of a line, and a cut with the checkpoint also deleted (`pks-core` `log::tests`, and `pks-cli/tests/policy_log.rs` through the real binary).
+- [x] A repo policy that loosens a rule is rejected with `POL-UNTRUSTED`: every rule and every lower action, the mode, and a user policy as the baseline (`policy::tests`, `policy_log.rs`).
+- [ ] CI is green on both runners. Needs the branch pushed and a PR.
+
+Steps: 7.1 [x] (`policy.rs`, version 1 schema), 7.2 [x] (`merge`, `resolve`; CLI `policy check`), 7.3 [x] (`trust`, pins in the host data dir, not in the repo), 7.4 [x] (ed25519 via `ed25519-dalek` 3.0.0, SHA-256 via `sha2` 0.11.1), 7.5 [x] (key in `<data dir>/keys`, mode 0700/0600, refused if looser or a symlink; "never visible to the sandbox" is enforced by the Phase 8 mounts, which must not include the data dir), 7.6 [x] (`log verify`).
+
+Tests: 224 in the workspace (pks-core 114, pks-scan 68, pks-cli 42). All mutation checks pass: 13 mutants of the log verifier, 13 of the policy and trust code, each caught by at least one test. Two gaps found that way (chain check, last-hash check) got their own tests, and a plain-`verify` mutant is caught by a weak-key forgery test.
+
+Demo: `cargo run -p pks-core --example sample_log -- /tmp/pks-demo`, then `cargo run -p pks-cli -- log verify /tmp/pks-demo/session.jsonl --key-dir /tmp/pks-demo/keys`. Edit, delete, reorder or cut the file and verify fails with the reason.
+
+Not done on purpose: a writer that reopens a closed or crashed session (`Logger` is create-only; a log with no checkpoint is checked with `--allow-open`), and plain `pumpkin-shell log` (a viewer). Nothing in the product writes logs yet; the proxy (Phase 9) is the first user.
 
 ---
 

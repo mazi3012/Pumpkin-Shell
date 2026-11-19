@@ -3,10 +3,19 @@
 //! Rules are data. `doctor`, `scan`, the watcher and the proxy all report
 //! problems with these types (PRD FR-DET, Phase 3 step 3.0).
 
+pub mod keys;
+pub mod log;
+pub mod paths;
+pub mod policy;
+pub mod trust;
+
+mod fsutil;
+mod hex;
+
 use serde::Serialize;
 
 /// Stable identifier of a detection rule, such as `SYS-IDE-TAMPERABLE`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
 pub struct RuleId(&'static str);
 
 impl RuleId {
