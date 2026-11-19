@@ -11,55 +11,17 @@ description: "Policy configuration and enforcement for Pumpkin-Shell. Activates 
 | User policy | `~/.config/pumpkin-shell/policy.toml` | No | Global user settings |
 | Repo policy | `pumpkin-shell.toml` (in repo) | Yes | Repo-specific overrides |
 
-## User Policy (`~/.config/pumpkin-shell/policy.toml`)
-
-Never visible inside the sandbox. Defines global behavior:
-
+## File format (version 1)
+Source of truth: PRD FR-POL. The code is `crates/pks-core/src/policy.rs`.
 ```toml
-# Example user policy
-[secrets]
-block_on_write = true
-
-[network]
-default_action = "ask"  # or "deny", "allow"
-
-[domains]
-"api.openai.com" = { action = "allow", upload_limit_mb = 100 }
-"github.com" = { action = "allow" }
-
-[paths]
-allowed = [
-  "~/.local/bin",
-  "/usr/local/bin",
-]
-
-[monitor]
-enabled = false  # Set to true for logging-only mode
+version = 1                          # required
+mode = "enforce"                     # or "monitor": log instead of block
+[rules."NET-UNKNOWN-DOMAIN"]
+action = "block"                     # "alert" < "ask" < "block"
 ```
-
-## Repo Policy (`pumpkin-shell.toml`)
-
-Can only **tighten** rules (never loosen). Hash-pinned to prevent tampering.
-
-```toml
-# Example repo policy
-[secrets]
-block_on_write = true  # Must be true or omitted
-
-[network]
-default_action = "deny"  # Stricter than user policy
-
-[domains]
-"api.openai.com" = { action = "allow", upload_limit_mb = 50 }  # Stricter limit
-
-[paths]
-allowed = [
-  "~/.local/bin",
-]  # Stricter than user policy
-
-# Hash of this file (auto-generated, never edit manually)
-trust = "sha256:abc123..."
-```
+- Only the rules in `CONFIGURABLE_RULES` can be set (the NET-* and REG-* rules). Others, including every `EXEC-*` rule, are rejected. Unknown keys are rejected.
+- The user policy may set anything. The repo policy may only raise `mode` toward `enforce` and rule actions toward `block`.
+- More fields (domains, paths, upload limits, secrets) are added in the phase whose code reads them.
 
 ## IDE Profiles
 
@@ -80,24 +42,25 @@ Paths, exact domains, and env keys for each IDE:
 | **Enforce** | Block and notify | Production |
 
 ## Policy Commands
-
 | Command | Purpose |
 |---------|---------|
-| `pumpkin-shell policy suggest` | Turn monitor logs into allow rules |
-| `pumpkin-shell trust` | Pin repo policy hash |
-| `pumpkin-shell review` | View policy violations |
+| `pumpkin-shell trust [PATH]` | Pin the SHA-256 of the repo's `pumpkin-shell.toml` |
+| `pumpkin-shell policy check [PATH]` | Print the effective policy and its hash; exit 1 when the repo policy is not applied or loosens something |
+| `pumpkin-shell policy suggest` | Turn monitor logs into allow rules (later phase) |
+| `pumpkin-shell review` | View policy violations (later phase) |
 
 ## Policy Merge Rules
+1. The user policy loads first, on top of built-in defaults (the PRD FR-DET table).
+2. The repo policy is applied only when its exact SHA-256 is pinned. Unpinned or changed: ignored, `POL-UNTRUSTED`.
+3. A repo entry that would loosen a setting is ignored and reported as `POL-UNTRUSTED` (WARN). The rest of the file still applies.
+4. An untrusted repo policy is never parsed.
 
-1. User policy loads first (global defaults)
-2. Repo policy merges on top (tighten-only)
-3. If repo policy loosens a rule, the merge is rejected
-4. Each merge is logged and signed
+## Trust pins
+Pins are stored in the host data dir (`trusted-policies.toml`, mode 0600), keyed by the repo's canonical path. They are never stored in the repo: whoever can edit the policy could edit its pin. Moving the repo, or changing one byte of the policy, means running `trust` again.
 
 ## Policy Changes Workflow
-
-1. User edits `pumpkin-shell.toml`
-2. `pumpkin-shell trust` calculates hash and pins
-3. During session, policy is read-only
-4. On next session, new policy loads
-5. Changes are tracked in signed log
+1. User edits `pumpkin-shell.toml`.
+2. `pumpkin-shell policy check` shows what would apply and what would be ignored.
+3. `pumpkin-shell trust` pins the hash.
+4. During a session the policy is read-only; the next session loads the new one.
+5. Policy changes are recorded in the signed log with the policy hash.
