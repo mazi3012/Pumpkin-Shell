@@ -1,0 +1,285 @@
+#!/bin/bash
+# linux-kiro.sh - Linux PoC: Run Kiro inside bubblewrap
+# This script creates a sandboxed environment for Kiro using bwrap
+# It demonstrates the security boundaries before building the full backend
+
+set -euo pipefail
+
+# Configuration
+readonly SCRIPT_NAME="$(basename "$0")"
+readonly REPO_ROOT="${1:-.}"
+readonly SANDBOX_HOME="/tmp/kiro-sandbox-home"
+readonly SANDBOX_TARGET="${SANDBOX_HOME}/project"
+
+# X11 configuration
+X11_SOCKET_DIR="${X11_SOCKET_DIR:-/tmp/.X11-unix}"
+X11_DISPLAY="${X11_DISPLAY:-:0}"
+X11_SOCKET="${X11_SOCKET_DIR}/X${X11_DISPLAY#:-}"
+
+# Print usage
+usage() {
+    cat <<EOF
+Usage: $SCRIPT_NAME [REPO_PATH]
+
+Run Kiro inside bubblewrap sandbox.
+
+Arguments:
+  REPO_PATH  Path to the repository to open (default: current directory)
+
+Environment variables:
+  X11_SOCKET_DIR  X11 socket directory (default: /tmp/.X11-unix)
+  X11_DISPLAY     X11 display to expose (default: :0)
+  X11_NO_EXPOSE   Set to non-empty to not expose X11 (for headless testing)
+  GPU_NO_EXPOSE   Set to non-empty to not expose GPU devices
+  NET_NO_EXPOSE   Set to non-empty to disable network (stub proxy not implemented)
+
+Examples:
+  $SCRIPT_NAME              # Run on current directory
+  $SCRIPT_NAME /path/to/repo
+  X11_NO_EXPOSE=1 $SCRIPT_NAME  # Test without X11
+EOF
+}
+
+# Check prerequisites
+check_prerequisites() {
+    local missing=()
+
+    if ! command -v bwrap &>/dev/null; then
+        missing+=("bwrap")
+    fi
+
+    if [[ ! -d "$REPO_ROOT" ]]; then
+        echo "Error: Repository path '$REPO_ROOT' does not exist" >&2
+        exit 1
+    fi
+
+    # Resolve to absolute path
+    REPO_ROOT="$(cd "$REPO_ROOT" && pwd)"
+
+    # Check for bwrap user namespace capability
+    if ! bwrap --unshare-all --die-with-parent --help &>/dev/null; then
+        echo "Warning: Some bwrap features may not be available" >&2
+    fi
+
+    return 0
+}
+
+# Create sandbox home directory
+setup_sandbox_home() {
+    rm -rf "$SANDBOX_HOME"
+    mkdir -p "$SANDBOX_HOME"
+    mkdir -p "$SANDBOX_TARGET"
+    echo "Created sandbox home at $SANDBOX_HOME"
+}
+
+# Build bwrap command
+build_bwrap_args() {
+    local args=()
+
+    # Isolation: Each of these is an --unshare-* flag
+    args+=(--unshare-all)
+
+    # New session and process tree
+    args+=(--new-session)
+    args+=(--die-with-parent)
+
+    # Read-only root filesystem
+    args+=(--ro-bind / /)
+
+    # Make specific paths writable or bind-mount as needed
+    # Note: /tmp is bind-mounted to preserve /tmp/.X11-unix if present
+    args+=(--bind /tmp /tmp)
+
+    # Sandbox home directory
+    args+=(--bind "$SANDBOX_HOME" "$SANDBOX_HOME")
+
+    # Bind mount the repo into the sandbox
+    args+=(--bind "$REPO_ROOT" "$SANDBOX_TARGET")
+
+    # X11 display (if available and not disabled)
+    if [[ -z "${X11_NO_EXPOSE:-}" && -S "$X11_SOCKET" ]]; then
+        echo "X11 display $X11_DISPLAY detected, exposing to sandbox"
+        args+=(--ro-bind "$X11_SOCKET_DIR" "$X11_SOCKET_DIR")
+        args+=(--env DISPLAY="$X11_DISPLAY")
+    else
+        echo "X11 not exposed to sandbox"
+        args+=(--env DISPLAY="")
+    fi
+
+    # GPU devices (if available and not disabled)
+    if [[ -z "${GPU_NO_EXPOSE:-}" ]]; then
+        if [[ -d /dev/dri ]]; then
+            echo "GPU /dev/dri detected, exposing to sandbox"
+            args+=(--dev-bind /dev/dri /dev/dri)
+        else
+            echo "No GPU /dev/dri found"
+        fi
+        if [[ -c /dev/dri/card0 ]]; then
+            # Additional GPU access if needed
+            :
+        fi
+    else
+        echo "GPU devices not exposed to sandbox"
+    fi
+
+    # /dev/shm for shared memory (required by Chromium)
+    if [[ -d /dev/shm ]]; then
+        args+=(--dev-bind /dev/shm /dev/shm)
+    fi
+
+    # /proc with fresh mount (no full /proc)
+    args+=(--proc /proc)
+
+    # Bind mount /sys as read-only (limited access)
+    args+=(--ro-bind /sys /sys)
+
+    # devpts for pseudo-terminals
+    args+=(--dev-bind /dev/pts /dev/pts)
+
+    # /run for systemd/user session (minimal)
+    args+=(--dir /run)
+
+    # Block dangerous syscalls (filtered via seccomp in full implementation)
+    # For PoC, we rely on bwrap's default restrictions
+
+    # Environment cleanup
+    args+=(--unset-env SSH_AUTH_SOCK)
+    args+=(--unset-env SSH_AGENT_PID)
+    args+=(--unset-env DISPLAY)
+    args+=(--unset-env WAYLAND_DISPLAY)
+    args+=(--unset-env DBUS_SESSION_BUS_ADDRESS)
+
+    # Set sandbox environment
+    args+=(--env HOME="$SANDBOX_HOME")
+    args+=(--env USER="kiro")
+    args+=(--env TERM="xterm-256color")
+
+    # Working directory inside sandbox
+    args+=(--cwd "$SANDBOX_TARGET")
+
+    # Final command
+    args+=(--exec /bin/bash --login)
+
+    printf '%s\n' "${args[@]}"
+}
+
+# Create wrapper script that applies bwrap
+create_wrapper_script() {
+    local wrapper_script="/tmp/kiro-sandbox-wrapper.sh"
+
+    cat > "$wrapper_script" << 'WRAPPER_EOF'
+#!/bin/bash
+# Kiro sandbox wrapper - generated by linux-kiro.sh
+# This script should be invoked from inside the sandbox
+
+set -euo pipefail
+
+# Check for security boundaries
+echo "=== Sandbox Security Boundaries Check ==="
+
+# 1. SSH socket check (should fail)
+if [[ -S "$SSH_AUTH_SOCK" ]]; then
+    echo "WARNING: SSH_AUTH_SOCK is present (UNEXPECTED)"
+else
+    echo "OK: SSH_AUTH_SOCK is not accessible (expected)"
+fi
+
+# 2. Network check - attempt to reach local metadata service (should fail)
+if command -v curl &>/dev/null; then
+    if timeout 2 curl -s http://169.254.169.254/latest/meta-data/ &>/dev/null; then
+        echo "WARNING: Metadata service reachable (UNEXPECTED)"
+    else
+        echo "OK: Metadata service not reachable (expected)"
+    fi
+fi
+
+# 3. Check for sandbox marker
+if [[ -f "$HOME/.sandbox-marker" ]]; then
+    echo "OK: Sandbox marker file found"
+else
+    echo "INFO: Sandbox marker file not found"
+fi
+
+echo "=== End Security Boundaries Check ==="
+echo ""
+echo "Sandbox is running. Type 'exit' to quit."
+echo "Repo is mounted at: $SANDBOX_TARGET"
+echo "Home directory: $HOME"
+WRAPPER_EOF
+
+    chmod +x "$wrapper_script"
+    echo "$wrapper_script"
+}
+
+# Main execution
+main() {
+    echo "=== Pumpkin-Shell Linux PoC: Kiro in bwrap ==="
+    echo ""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                REPO_ROOT="$1"
+                shift
+                ;;
+        esac
+    done
+
+    check_prerequisites
+    setup_sandbox_home
+
+    # Create sandbox marker
+    echo "kiro-sandbox-v1" > "$SANDBOX_HOME/.sandbox-marker"
+
+    # Build bwrap arguments
+    echo "Building bwrap command..."
+    local bwrap_args_file="/tmp/bwrap-args-$$"
+    build_bwrap_args > "$bwrap_args_file"
+
+    # Display command for review
+    echo ""
+    echo "=== Generated bwrap command (for review) ==="
+    echo -n "bwrap "
+    while IFS= read -r arg; do
+        if [[ "$arg" =~ [[:space:]] ]] || [[ "$arg" =~ [\"\'] ]]; then
+            printf "'%s' " "$arg"
+        else
+            printf "%s " "$arg"
+        fi
+    done < "$bwrap_args_file"
+    echo ""
+    echo ""
+
+    # Execute bwrap
+    echo "Launching sandbox..."
+    echo ""
+    
+    # Create wrapper script and include it in the command
+    local wrapper_script
+    wrapper_script="$(create_wrapper_script)"
+
+    # Build final command
+    local final_args=()
+    while IFS= read -r arg; do
+        final_args+=("$arg")
+    done < "$bwrap_args_file"
+
+    # Remove the final --exec /bin/bash --login and replace with wrapper
+    unset 'final_args[-1]' 'final_args[-1]'
+
+    # Execute
+    bwrap "${final_args[@]}" /bin/bash -l -c "source $wrapper_script && exec /bin/bash -l"
+
+    # Cleanup
+    rm -f "$bwrap_args_file" "$wrapper_script"
+
+    echo ""
+    echo "Sandbox session ended."
+}
+
+main "$@"
