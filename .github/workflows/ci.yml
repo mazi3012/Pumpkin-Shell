@@ -30,6 +30,15 @@ jobs:
         with:
           tool: cargo-deny@0.21.0,cargo-audit@0.23.0
 
+      # The sandbox tests run real bubblewrap, Xephyr and xauth (Linux only).
+      # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor, so
+      # the runner allows them. Both steps are Linux-only.
+      - name: Install sandbox tools (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap xserver-xephyr xauth x11-utils curl python3
+      - name: Allow unprivileged user namespaces (Linux)
+        if: runner.os == 'Linux'
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Format
         run: cargo fmt --all --check
 
