@@ -3,12 +3,15 @@
 //! Rules are data. `doctor`, `scan`, the watcher and the proxy all report
 //! problems with these types (PRD FR-DET, Phase 3 step 3.0).
 
+pub mod decoy;
 pub mod keys;
 pub mod log;
 pub mod net;
 pub mod paths;
 pub mod policy;
+pub mod snapshot;
 pub mod trust;
+pub mod workspace;
 
 mod fsutil;
 mod hex;

@@ -12,7 +12,7 @@ pub mod spec;
 #[cfg(target_os = "linux")]
 pub mod linux;
 
-pub use spec::{IdeInstall, LaunchSpec, Roots};
+pub use spec::{Bind, IdeInstall, LaunchSpec, Roots};
 
 use std::process::ExitStatus;
 

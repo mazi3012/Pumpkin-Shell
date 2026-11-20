@@ -26,9 +26,9 @@ These paths are bind-mounted from a staging copy on Linux or have deny-write ACL
 | IDE user-level `settings.json` | IDE settings in sandboxed home |
 | IDE user-level `mcp.json` | MCP config in sandboxed home |
 
-## Watched Paths (Editable, Always Shown in Review)
+## Watched Paths (Held for Review)
 
-Changes are logged and shown in review but not blocked.
+The sandbox works on a staged copy of each watched path, as for protected paths (PRD FR-WS). Changes are not applied to the repo until accepted. Each changed path is a HIGH `WS-WATCHED-CHANGE`.
 
 | Path | Description |
 |------|-------------|
@@ -69,9 +69,7 @@ Fake credentials placed in sandboxed home to detect exfiltration:
 - **Watched**: Files that influence behavior but don't execute directly
 
 ## Review Flow
-
-1. Write to protected path → staged, alert raised
-2. `pumpkin-shell review` shows staged writes
-3. User approves or rejects
-4. If approved, file moved to real location
-5. If rejected, file stays in staging (deleted at session end)
+1. Write to a protected path -> goes to the staged copy, `WS-PROTECTED-WRITE` is raised at session end
+2. The staged copy is kept in `<data>/sessions/<sid>/staging/`
+3. `pumpkin-shell review` (Phase 11) will show staged writes and let the user approve or reject; until then the user copies what they accept by hand
+4. The repo itself is never written by the sandbox for these paths

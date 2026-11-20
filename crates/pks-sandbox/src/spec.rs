@@ -13,6 +13,16 @@ use crate::SandboxError;
 /// `pks_core::policy::PROXY_RELAY_PORT`, which refuses it as a host port.
 const PROXY_RELAY_PORT: u16 = 3128;
 
+/// A host path bound inside the repo's mount point, over what the repo has
+/// there. Used to give the IDE a staged copy of a protected path (PRD FR-WS).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Bind {
+    /// Path below the repo root, `/`-separated, with no `.` or `..`.
+    pub rel: String,
+    /// Host path bound there.
+    pub source: PathBuf,
+}
+
 /// Where the host keeps things the IDE must never see. Filled in by the
 /// caller from the real environment (or by tests from temp dirs).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +69,8 @@ pub struct LaunchSpec {
     /// Host ports the IDE may reach on its own loopback (PRD FR-NET,
     /// scenario 7). Relayed to the host's `127.0.0.1` by the proxy.
     pub host_ports: Vec<u16>,
+    /// Paths bound over parts of the repo, parents before what is under them.
+    pub binds: Vec<Bind>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -176,11 +188,55 @@ pub fn check(spec: &LaunchSpec) -> Result<(), SandboxError> {
             )));
         }
     }
+    check_binds(&spec.binds)?;
     let (width, height) = spec.display_size;
     if !(320..=8192).contains(&width) || !(240..=8192).contains(&height) {
         return Err(refuse(
             "the display size must be between 320x240 and 8192x8192",
         ));
+    }
+    Ok(())
+}
+
+/// A bind's `rel` must be a plain relative path, its source must exist, and a
+/// bind must come after any bind it is under (a later bind over a parent
+/// would hide it).
+fn check_binds(binds: &[Bind]) -> Result<(), SandboxError> {
+    for (index, bind) in binds.iter().enumerate() {
+        let plain = !bind.rel.is_empty()
+            && bind.rel.split('/').all(|part| {
+                !part.is_empty() && part != "." && part != ".." && !part.contains('\0')
+            });
+        if !plain {
+            return Err(refuse(format!(
+                "bind path {:?} must be a plain path below the repo",
+                bind.rel
+            )));
+        }
+        if fs::symlink_metadata(&bind.source).is_err() {
+            return Err(refuse(format!(
+                "bind source {} does not exist",
+                bind.source.display()
+            )));
+        }
+        let under = |outer: &str, inner: &str| {
+            inner.len() > outer.len()
+                && inner.starts_with(outer)
+                && inner.as_bytes()[outer.len()] == b'/'
+        };
+        if binds[index + 1..]
+            .iter()
+            .any(|later| under(&later.rel, &bind.rel))
+        {
+            return Err(refuse(format!(
+                "bind {} comes before its parent {}",
+                bind.rel,
+                binds[index + 1..]
+                    .iter()
+                    .find(|later| under(&later.rel, &bind.rel))
+                    .map_or("", |later| later.rel.as_str())
+            )));
+        }
     }
     Ok(())
 }
@@ -252,6 +308,7 @@ mod tests {
                 display_size: (1280, 800),
                 proxy_socket: proxy.clone(),
                 host_ports: Vec::new(),
+                binds: Vec::new(),
             };
             Ok(Self { _dir: dir, spec })
         }
@@ -430,6 +487,61 @@ mod tests {
             binary: PathBuf::from("/usr/bin/sh"),
         };
         assert!(check(&host.spec).is_ok(), "{:?}", check(&host.spec));
+        Ok(())
+    }
+
+    fn bind(rel: &str, source: &Path) -> Bind {
+        Bind {
+            rel: rel.to_owned(),
+            source: source.to_path_buf(),
+        }
+    }
+
+    #[test]
+    fn plain_binds_in_parent_first_order_pass_the_bind_check() -> TestResult {
+        let host = Host::new()?;
+        let source = host.spec.repo.clone();
+        let binds = vec![
+            bind(".git", &source),
+            bind(".git/hooks", &source),
+            bind(".vscode", &source),
+        ];
+        check_binds(&binds)?;
+        Ok(())
+    }
+
+    #[test]
+    fn a_bind_path_that_could_leave_the_repo_is_refused() -> TestResult {
+        let host = Host::new()?;
+        let source = host.spec.repo.clone();
+        for rel in [
+            "", "..", "../x", "a/../b", "/abs", "a//b", "./a", "a/.", "a/", "a\0b",
+        ] {
+            assert!(
+                refused(check_binds(&[bind(rel, &source)])),
+                "{rel:?} was accepted"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_bind_whose_source_is_missing_is_refused() -> TestResult {
+        let host = Host::new()?;
+        let missing = host.spec.repo.join("does-not-exist");
+        assert!(refused(check_binds(&[bind(".vscode", &missing)])));
+        Ok(())
+    }
+
+    #[test]
+    fn a_bind_listed_before_its_parent_is_refused() -> TestResult {
+        let host = Host::new()?;
+        let source = host.spec.repo.clone();
+        let binds = vec![bind(".git/hooks", &source), bind(".git", &source)];
+        assert!(refused(check_binds(&binds)));
+        // A sibling whose name starts the same is not a parent.
+        let siblings = vec![bind(".git-extra", &source), bind(".git", &source)];
+        check_binds(&siblings)?;
         Ok(())
     }
 

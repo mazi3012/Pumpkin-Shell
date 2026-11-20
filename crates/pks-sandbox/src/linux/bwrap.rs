@@ -79,6 +79,8 @@ pub struct Plan {
     pub proxy_socket: PathBuf,
     /// Host ports the IDE may reach on its loopback (PRD FR-NET).
     pub host_ports: Vec<u16>,
+    /// Paths bound over parts of the repo, parents first.
+    pub binds: Vec<crate::spec::Bind>,
 }
 
 fn push(args: &mut Vec<OsString>, values: &[&str]) {
@@ -146,6 +148,16 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     // The three things the IDE may write to, and the repo it opens.
     push_path(&mut args, "--bind", &plan.ide_home, SANDBOX_HOME);
     push_path(&mut args, "--bind", &plan.repo, WORKSPACE);
+    // Staged copies of the protected paths, over what the repo has there. A
+    // write to one lands in the staging area, not in the repo.
+    for bind in &plan.binds {
+        push_path(
+            &mut args,
+            "--bind",
+            &bind.source,
+            &format!("{WORKSPACE}/{}", bind.rel),
+        );
+    }
     // The nested display's socket, and only that. The host's own display
     // (:0) is never mounted.
     let socket_in = format!("/tmp/.X11-unix/X{}", plan.display);
@@ -254,7 +266,45 @@ mod tests {
             init_exe: PathBuf::from("/usr/bin/pumpkin-shell"),
             proxy_socket: PathBuf::from("/srv/run/proxy.sock"),
             host_ports: Vec::new(),
+            binds: Vec::new(),
         }
+    }
+
+    #[test]
+    fn binds_come_right_after_the_repo_and_land_below_the_workspace() {
+        let mut p = plan();
+        p.binds = vec![
+            crate::spec::Bind {
+                rel: ".git".to_owned(),
+                source: PathBuf::from("/srv/project/.git"),
+            },
+            crate::spec::Bind {
+                rel: ".git/hooks".to_owned(),
+                source: PathBuf::from("/srv/session/staging/.git/hooks"),
+            },
+        ];
+        let args = strings(&bwrap_args(&p));
+        let repo_at = args
+            .windows(3)
+            .position(|w| w[0] == "--bind" && w[1] == "/srv/project" && w[2] == WORKSPACE);
+        let git_at = args.windows(3).position(|w| {
+            w[0] == "--bind" && w[1] == "/srv/project/.git" && w[2] == "/workspace/.git"
+        });
+        let hooks_at = args.windows(3).position(|w| {
+            w[0] == "--bind"
+                && w[1] == "/srv/session/staging/.git/hooks"
+                && w[2] == "/workspace/.git/hooks"
+        });
+        assert!(repo_at < git_at, "{repo_at:?} {git_at:?}");
+        assert!(git_at < hooks_at, "{git_at:?} {hooks_at:?}");
+        assert!(hooks_at.is_some());
+    }
+
+    #[test]
+    fn no_binds_means_only_the_repo_is_bound_at_the_workspace() {
+        let args = strings(&bwrap_args(&plan()));
+        let under_workspace = args.iter().filter(|a| a.starts_with("/workspace/")).count();
+        assert_eq!(under_workspace, 0, "{args:?}");
     }
 
     fn strings(args: &[OsString]) -> Vec<String> {

@@ -1,6 +1,6 @@
 # Pumpkin-Shell: product context
 
-Pumpkin-Shell is a Rust tool that launches AI-powered IDEs (Kiro first, then VS Code, Cursor, Windsurf) inside an OS-level sandbox on **Linux and Windows**. It removes capabilities (no host credentials, filtered network, staged writes to files that run later), guards npm/PyPI installs through a local mirror, detects and notifies on suspicious behavior, and writes a signed, hash-chained log.
+Pumpkin-Shell is a Rust tool that launches AI-powered IDEs (first release: Kiro on **Linux**; Windows and VS Code, Cursor, Windsurf come after it) inside an OS-level sandbox. It removes capabilities (no host credentials, filtered network, staged writes to files that run later), guards npm/PyPI installs through a local mirror, detects and notifies on suspicious behavior, and writes a signed, hash-chained log.
 
 - Canonical PRD: #[[file:docs/PRD.md]]
 - Decisions and open questions: #[[file:docs/DECISIONS.md]]
@@ -10,7 +10,7 @@ Pumpkin-Shell is a Rust tool that launches AI-powered IDEs (Kiro first, then VS 
 
 ## Non-negotiables
 
-- Scope v1: desktop IDEs on Linux and Windows only. No standalone CLI-agent wrapping, no macOS.
+- Scope of the first release (2026-11-21): Kiro IDE on Linux only. Windows and VS Code, Cursor, Windsurf are planned after it. No standalone CLI-agent wrapping, no macOS.
 - The whole IDE runs inside the sandbox (not split mode).
 - Remove capabilities instead of guessing intent. Command/argument matching is detection only, never the security boundary.
 - All authority (policy, signing key, log, proxy, brokers, auditing) lives on the host side, never inside the sandbox.

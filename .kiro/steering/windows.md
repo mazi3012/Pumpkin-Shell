@@ -1,7 +1,7 @@
 ---
 inclusion: auto
 name: windows
-description: "Windows sandbox backend for Pumpkin-Shell. Activates when Windows-specific configurations are referenced."
+description: "Windows sandbox backend for Pumpkin-Shell. Deferred until after the first release (Linux and Kiro only). Activates when Windows-specific configurations are referenced."
 ---
 
 ## Architecture

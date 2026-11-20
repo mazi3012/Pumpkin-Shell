@@ -11,6 +11,8 @@ mod ads;
 mod configs;
 mod fs_safe;
 mod git;
+pub mod secrets;
+pub mod staged;
 mod unicode;
 mod walk;
 
@@ -30,6 +32,7 @@ pub mod rule {
     pub const FOLDER_OPEN_TASK: RuleId = RuleId::new("WS-FOLDER-OPEN-TASK");
     pub const YARNPATH: RuleId = RuleId::new("WS-YARNPATH");
     pub const GIT_HOOK: RuleId = RuleId::new("WS-GIT-HOOK");
+    pub const SECRET_WRITTEN: RuleId = RuleId::new("WS-SECRET-WRITTEN");
     #[cfg(windows)]
     pub const ADS: RuleId = RuleId::new("WS-ADS");
 }

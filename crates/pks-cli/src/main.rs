@@ -4,6 +4,7 @@ mod doctor;
 mod ide;
 mod log;
 mod policy;
+mod restore;
 mod scan;
 
 use std::ffi::OsString;
@@ -91,6 +92,14 @@ enum Command {
         /// Host port to listen on and forward to the host's loopback (repeatable).
         #[arg(long = "host-port")]
         host_port: Vec<u16>,
+    },
+    /// Write the snapshot of a session to a new directory (default: under the data dir).
+    Restore {
+        /// The session id printed by `ide`.
+        session: String,
+        /// Directory to write into. It must not exist or must be empty.
+        #[arg(long)]
+        into: Option<PathBuf>,
     },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
     Trust {
@@ -185,6 +194,7 @@ fn main() -> ExitCode {
             socket,
             host_port,
         }) => ide::sandbox_relay(listen, &socket, &host_port),
+        Some(Command::Restore { session, into }) => restore::run(&session, into.as_deref()),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

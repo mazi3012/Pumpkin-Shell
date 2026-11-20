@@ -72,12 +72,19 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
     if !repo.is_dir() {
         return setup(format!("{} is not a directory", repo.display()));
     }
+    // One canonical path for the snapshot, the staging and the sandbox, so a
+    // path inside the repo compares the same everywhere.
+    let repo = match std::fs::canonicalize(repo) {
+        Ok(path) => path,
+        Err(error) => return setup(format!("cannot resolve {}: {error}", repo.display())),
+    };
+    let repo = repo.as_path();
     let policy = match pks_core::policy::read_user_policy(&config) {
         Ok(found) => found.unwrap_or_else(pks_core::policy::empty_user_policy),
         Err(error) => return setup(format!("your policy is not valid: {error}")),
     };
     let effective = pks_core::policy::Effective::from_user(&policy);
-    let session = match Session::start(&data, &effective) {
+    let mut session = match Session::start(&data, &effective, repo) {
         Ok(session) => session,
         Err(message) => return setup(message),
     };
@@ -87,6 +94,18 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
     if let Err(error) = create_private_dir(&ide_home) {
         return setup(format!("cannot create {}: {error}", ide_home.display()));
     }
+    // Decoy credentials in the IDE's home (PRD FR-WS). They are written fresh
+    // for this session, and an access to one is reported while the IDE runs.
+    let decoys = match pks_core::decoy::plant(&ide_home) {
+        Ok(decoys) => decoys,
+        Err(error) => return setup(format!("cannot write the decoy credentials: {error}")),
+    };
+    let decoy_watch = match pks_sandbox::linux::watch::AccessWatch::new(
+        &decoys.iter().map(|d| d.path.clone()).collect::<Vec<_>>(),
+    ) {
+        Ok(watch) => watch,
+        Err(error) => return setup(format!("cannot watch the decoy credentials: {error}")),
+    };
     let spec = LaunchSpec {
         repo: repo.to_path_buf(),
         ide: spec_install,
@@ -102,6 +121,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         display_size: (1280, 800),
         proxy_socket: session.socket.clone(),
         host_ports: effective.host_ports.iter().copied().collect(),
+        binds: session.binds(),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -118,7 +138,41 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         backend.name(),
         session.id
     );
+    let stop_watch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch_thread = {
+        let stop = std::sync::Arc::clone(&stop_watch);
+        let log = std::sync::Arc::clone(&session.log);
+        let policy_hash = session.policy_hash.clone();
+        let names: Vec<(PathBuf, &'static str)> =
+            decoys.iter().map(|d| (d.path.clone(), d.name)).collect();
+        std::thread::spawn(move || {
+            let mut reported: Vec<&'static str> = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match decoy_watch.wait(200) {
+                    Ok(paths) => {
+                        for path in paths {
+                            let Some((_, name)) = names.iter().find(|(p, _)| *p == path) else {
+                                continue;
+                            };
+                            if !reported.contains(name) {
+                                reported.push(name);
+                                let finding = pks_core::decoy::read_finding(name);
+                                emit(&log, &policy_hash, &finding, "alert");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("ide: the decoy watch stopped: {error}");
+                        break;
+                    }
+                }
+            }
+        })
+    };
     let result = backend.run(&spec);
+    stop_watch.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = watch_thread.join();
+    session.check_workspace(repo);
     session.close();
     match result {
         Ok(status) => match status.code() {
@@ -145,6 +199,13 @@ fn ide_name(ide: Ide) -> &'static str {
 #[cfg(target_os = "linux")]
 struct Session {
     id: String,
+    /// The session directory: holds the snapshot and the session log.
+    dir: PathBuf,
+    /// Hash of the policy in force, written into every log record.
+    policy_hash: String,
+    /// The staged protected paths. Dropping it removes the mount points that
+    /// were made in the repo, so every way out of a session cleans up.
+    staging: Option<pks_core::workspace::Staging>,
     socket: PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
@@ -153,7 +214,11 @@ struct Session {
 
 #[cfg(target_os = "linux")]
 impl Session {
-    fn start(data: &Path, effective: &pks_core::policy::Effective) -> Result<Self, String> {
+    fn start(
+        data: &Path,
+        effective: &pks_core::policy::Effective,
+        repo: &Path,
+    ) -> Result<Self, String> {
         use pks_core::keys;
         use pks_core::log::{Logger, new_session_id};
         use pks_proxy::{Config, Engine, serve};
@@ -167,6 +232,15 @@ impl Session {
             .map_err(|e| format!("cannot create {}: {e}", sessions.display()))?;
         let dir = sessions.join(&id);
         create_private_dir(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        // The snapshot comes before the IDE starts. Without it, the session
+        // does not start (PRD FR-WS: snapshot before launch).
+        let commit = pks_core::snapshot::create(repo, &dir)
+            .map_err(|e| format!("cannot take the snapshot of {}: {e}", repo.display()))?;
+        eprintln!("ide: snapshot {} taken", &commit[..12]);
+        // Staging comes after the snapshot, so the mount points it makes in
+        // the repo are not in the snapshot.
+        let staging = pks_core::workspace::prepare(repo, &dir)
+            .map_err(|e| format!("cannot protect the workspace: {e}"))?;
         let key = keys::load_or_create_signing_key(&data.join("keys"))
             .map_err(|e| format!("signing key: {e}"))?;
         let logger = Logger::create(&dir.join("session.jsonl"), key, &id)
@@ -177,6 +251,7 @@ impl Session {
             .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
 
         let policy_hash = effective.hash();
+        let session_policy_hash = policy_hash.clone();
         let sink_log = Arc::clone(&log);
         let events: pks_proxy::EventSink = Arc::new(move |finding| {
             eprintln!(
@@ -219,6 +294,9 @@ impl Session {
         });
         Ok(Self {
             id,
+            dir,
+            policy_hash: session_policy_hash,
+            staging: Some(staging),
             socket,
             stop,
             server: Some(server),
@@ -226,6 +304,50 @@ impl Session {
         })
     }
 
+    /// The staged protected paths, as binds for the sandbox.
+    fn binds(&self) -> Vec<pks_sandbox::Bind> {
+        self.staging
+            .as_ref()
+            .map(|staging| {
+                staging
+                    .mounts()
+                    .iter()
+                    .map(|mount| pks_sandbox::Bind {
+                        rel: mount.rel.clone(),
+                        source: mount.source.clone(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Prints a finding and writes it to the signed log.
+    fn report(&self, finding: &pks_core::Finding, verdict: &str) {
+        emit(&self.log, &self.policy_hash, finding, verdict);
+    }
+
+    /// After the IDE exits: reports writes to protected and watched paths (kept
+    /// in staging, verdict `staged`), secrets written into the repo, and a
+    /// mass delete against the snapshot (`alert`).
+    fn check_workspace(&mut self, repo: &Path) {
+        if let Some(staging) = self.staging.take() {
+            // Checks the sandbox's writes to protected paths, then ends the staging.
+            for finding in pks_scan::staged::review(staging) {
+                self.report(&finding, "staged");
+            }
+        }
+        // Secrets the sandbox wrote into the repo (values are never printed).
+        for finding in pks_scan::staged::repo_secret_findings(repo, &self.dir) {
+            self.report(&finding, "alert");
+        }
+        match pks_core::snapshot::check_mass_delete(repo, &self.dir, &self.id) {
+            Ok(Some(finding)) => self.report(&finding, "alert"),
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("ide: could not check the workspace against the snapshot: {error}");
+            }
+        }
+    }
     /// Stops the proxy, closes the log with its signed checkpoint, and removes
     /// the socket.
     fn close(mut self) {
@@ -263,6 +385,39 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+/// Prints a finding and writes it to the session's signed log. Used by the
+/// session and by the decoy watch thread, so both log the same way.
+#[cfg(target_os = "linux")]
+fn emit(
+    log: &std::sync::Mutex<Option<pks_core::log::Logger>>,
+    policy_hash: &str,
+    finding: &pks_core::Finding,
+    verdict: &str,
+) {
+    eprintln!(
+        "[{:?}] {} {}: {}",
+        finding.severity,
+        finding.rule.as_str(),
+        finding.target,
+        finding.message
+    );
+    eprintln!("ide: {}", finding.fix);
+    if let Ok(mut guard) = log.lock()
+        && let Some(logger) = guard.as_mut()
+    {
+        let _ = logger.append(
+            &Record {
+                policy_hash,
+                layer: "ws",
+                target: &finding.target,
+                rule: finding.rule.as_str(),
+                verdict,
+            },
+            now_ms(),
+        );
+    }
 }
 
 /// Asks in the terminal. With no terminal (headless), nobody can answer, and

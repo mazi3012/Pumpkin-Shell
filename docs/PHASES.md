@@ -15,21 +15,21 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
-| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
+| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | deferred: after first release |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
-| 9 | Egress proxy | T7 | Both | | in-progress (code complete, branch `phase-9-egress-proxy`; PR not opened, push blocked) |
-| 10 | Workspace integrity (Linux) | T8 | Linux | | todo |
+| 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
+| 10 | Workspace integrity (Linux) | T8 | Linux | | in-progress (branch `phase-10-workspace-integrity`) |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
-| 13 | Code-OSS adapter, four IDEs | T11 | Linux | **Linux v0.5** | todo |
-| 14 | npm and PyPI mirror | T12 | Both | | todo |
+| 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
+| 14 | npm and PyPI mirror | T12 | Linux | | todo |
 | 15 | Linux exec/connect auditing | T13 | Linux | | todo |
-| 16 | Windows enforcement | T14 | Windows | | todo |
-| 17 | Windows parity | T15 | Windows | | todo |
-| 18 | v1.0 release | T16 | Both | **v1.0** | todo |
+| 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
+| 17 | Windows parity | T15 | Windows | | deferred: after first release |
+| 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | todo |
 
-Phase 6 is out of number order on purpose. The PRD runs both proofs of concept early so the design can change before anything depends on it. If no Windows machine is available, skip Phase 6 and continue with Phase 7. It must be done before Phase 16.
+**First-release scope (set 2026-11-21, see DECISIONS.md):** Linux and Kiro only. Phases 6, 13, 16 and 17 are deferred until after the first release. Phase 6 keeps its number, and it is out of order on purpose. The PRD runs the Windows proof of concept early, so the design can change before anything depends on it. Nothing in the first release waits on Phase 6.
 
 Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <reason>`. Update this table when a phase changes state.
 
@@ -152,7 +152,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 
 ---
 
-## Phase 6: Windows PoC: Kiro as `pks-sandbox`
+## Phase 6: Windows PoC: Kiro as `pks-sandbox` (deferred: after first release)
 
 **Goal:** prove the Windows design (separate user, WFP, Job Object) before building on it.
 
@@ -220,6 +220,8 @@ Not done in Phase 8: VS Code (`ide code`) was not run; it is the same code path 
 
 ## Phase 9: Egress proxy
 
+**Status: done.** Merged as PR #9 (f8ce48c). Open note carried forward: Kiro Extensions need `open-vsx.org` and `openvsx.eclipsecontent.org`, which are not in the allowlist (see DECISIONS.md).
+
 **Goal:** the only network path out of the sandbox. Adds crate `pks-proxy`.
 
 9.1. [x] Host proxy on a Unix socket, with a relay inside the sandbox on loopback (`pumpkin-shell sandbox-relay` on `127.0.0.1:3128`, started by `sandbox-init` before the seccomp filter).
@@ -243,15 +245,21 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 **Goal:** protected files are staged, not written; the user can always recover.
 
-10.1. Protected paths bind-mounted from a staging copy; new protected paths caught by a host inotify watcher and quarantined (`WS-PROTECTED-WRITE`).
-10.2. `WS-AUTOAPPROVE` on staged config changes: CRITICAL, staged, pause.
-10.3. Watched paths diffed and shown in review (`WS-WATCHED-CHANGE`).
-10.4. Snapshot before launch: working tree including untracked non-ignored files, via a temporary index, bundled to the data dir. `pumpkin-shell restore <sid>`.
-10.5. `WS-MASS-DELETE` (> 50 files or > 20% of tracked files) with a restore hint.
-10.6. Decoy `id_ed25519`, AWS credentials and `gh` `hosts.yml` with unique markers (`FS-DECOY-READ`).
-10.7. `WS-SECRET-WRITTEN` for secrets written into the repo.
+10.1. [x] Protected paths bind-mounted from a staging copy (`WS-PROTECTED-WRITE`). The 12 PRD paths plus an in-repo `core.hooksPath` target. Existing paths are copied to `<session>/staging/`; missing ones get an empty staged file or directory and an empty mount point in the repo, removed at exit. Parent directories (`.git`, `.kiro`) are bound over themselves so they cannot be renamed. Symlinks, wrong types, special files and trees over 10,000 files or 64 MiB are refused before the session starts. At exit each staged copy is compared with its start state (content and mode) and each change is a HIGH finding, printed and logged with verdict `staged`. Tests: 17 in `pks-core::workspace`, bind checks in `pks-sandbox`, and two real-sandbox tests. Not done here: the "host inotify watcher" of the PRD is not needed, because every protected path is covered by a mount, including ones that do not exist yet.
+10.2. [x] `WS-AUTOAPPROVE` on staged config changes: CRITICAL, staged. The config rules of `scan` (`pks-scan::staged::review`) run on each staged file the sandbox added or changed. Auto-approve turned on, or an MCP server or command hook added, is CRITICAL. An unparseable config is HIGH, never a pass. Pausing is Phase 11. Tests: 6 unit tests in `pks-scan::staged`, PRD scenarios 3 and 4 in the real sandbox.
+10.3. [x] Watched paths held for review (`WS-WATCHED-CHANGE`, HIGH). Decided 2026-11-21 (option C): the sandbox works on a staged copy of each watched path, as protected paths do (10.1), so only the sandbox's writes are in the copy and nothing is applied to the repo. An overlayfs was rejected for watched paths: overlayfs cannot mount on a single file, and most watched paths are files (checked on this kernel). The earlier exit-time comparison with the snapshot (first version of 10.3) was removed on the user's confirmation (2026-11-21), with its helpers in `snapshot.rs` and five unit tests. Test: `an_edit_to_a_watched_file_is_held_and_the_repo_is_unchanged` in the real sandbox, and 2 unit tests in `pks-core::workspace`. The 11 watched paths (`.github/workflows`, `package.json`, `Makefile`, `Dockerfile`, `.devcontainer`, `conftest.py`, `setup.py`, `.pre-commit-config.yaml`, `.kiro/steering`, `AGENTS.md`, `.cursorrules`) are staged like protected paths, so symbolic links are refused and a missing one gets a mount point removed at exit.
+10.4. [x] Snapshot before launch: working tree including untracked non-ignored files, via a temporary index in a bare git directory in the session dir (`snapshot.git`). `ide` refuses to start if the snapshot fails. `pumpkin-shell restore <sid> [--into DIR]` writes it into a new directory (default `<data>/restores/<sid>`). Tests: `pks-core` snapshot (7) and `pks-cli` restore (5, Linux). Not yet: a live `ide` run that shows the snapshot line (needs a GUI session).
+10.5. [x] `WS-MASS-DELETE` (> 50 files or > 20% of the snapshot files) with a restore hint. Checked when the IDE exits, against the snapshot; it is HIGH, printed, and logged as layer `ws`. Tests: thresholds, a whole-directory delete, a few files in a large repo, and PRD scenario 8 in the real sandbox (`rm -rf src` inside, detected outside, restored). Limit: it is found at exit, not while the IDE runs; a live check comes with the watcher in Phase 11.
+10.6. [x] Decoy `.ssh/id_ed25519`, `.aws/credentials` and `.config/gh/hosts.yml` in the IDE home, each with a random marker, written fresh for every session (`pks-core::decoy`). An access is `FS-DECOY-READ` (HIGH), reported while the IDE runs through an inotify watch (`pks-sandbox::linux::watch`, `IN_OPEN` and `IN_ACCESS`), once per decoy. The finding names the decoy, never its marker. Tests: 5 unit tests in `pks-core::decoy`, and 2 real-sandbox tests (a read inside the sandbox is seen on the host; a session that reads no decoy reports none). Limit: the watch covers files the sandbox opens; a decoy the IDE copies elsewhere is not tracked, and the decoys hold no real secret (a copy is worth nothing to an attacker).
+10.7. [x] `WS-SECRET-WRITTEN` (HIGH) for secrets the sandbox wrote. Two places are scanned at exit: files added or changed in the repo since the snapshot (found with a temporary git index, ignored files excluded), and the staged copies of protected and watched paths. Kinds: private key headers, AWS access key IDs (`AKIA`, `ASIA`), GitHub tokens (six documented prefixes), and a copy of one of our decoys. The finding names the file, the first line and the kind; the value is never printed or logged. Tests: 10 unit tests in `pks-scan::secrets`, 6 in `pks-scan::staged`, 1 in `pks-core::snapshot`, and a real-sandbox test (a token written to a repo file and to a staged `.npmrc` is reported, value not shown).
 
 **Done when:** PRD scenarios 3, 4 and 8 pass.
+
+Status of that line (2026-11-21):
+- Scenario 8 (`rm -rf src/`: `WS-MASS-DELETE`, `restore` recovers): [x] in the real sandbox (`a_mass_delete_inside_the_sandbox_is_found_and_restored`).
+- Scenario 3 (a README injection enables auto-approve: write staged, CRITICAL alert, IDE paused): [~] the write is staged and the CRITICAL finding is raised (`scenario_3_enabling_auto_approve_is_staged_and_critical`). **"IDE paused" is not done: pausing is Phase 11 (11.5).** The finding is raised when the IDE exits, not live.
+- Scenario 4 (the agent creates a test-on-save hook: works in-session; user approves it in review): [~] the hook works in-session, is staged, and is CRITICAL (`scenario_4_a_new_command_hook_is_staged_and_critical`). **"User approves it in review" is not done: `pumpkin-shell review` is Phase 11 (11.6).**
+- Not yet run: the whole `pumpkin-shell ide` flow with a real IDE (snapshot line, decoys, staged mounts, exit report). The pieces are tested in the real sandbox; the glue in `ide.rs` is only compiled and linted. A run with the user is planned.
 
 ---
 
@@ -285,7 +293,7 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 ---
 
-## Phase 13: Code-OSS adapter and four IDEs → Linux v0.5
+## Phase 13: Code-OSS adapter, VS Code, Cursor, Windsurf (deferred: after first release)
 
 **Goal:** one adapter that covers Kiro, VS Code, Cursor and Windsurf. Adds crate `pks-ide` and `profiles/`.
 
@@ -330,7 +338,7 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 ---
 
-## Phase 16: Windows enforcement
+## Phase 16: Windows enforcement (deferred: after first release)
 
 **Goal:** `pumpkin-shell ide kiro .` on Windows, using what Phase 6 learned.
 
@@ -347,7 +355,7 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 ---
 
-## Phase 17: Windows parity
+## Phase 17: Windows parity (deferred: after first release)
 
 **Goal:** every Linux feature also works on Windows.
 
@@ -362,19 +370,19 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 ---
 
-## Phase 18: v1.0 release
+## Phase 18: v1.0 release (first release: Linux, Kiro)
 
-**Goal:** a signed, installable product with honest public claims.
+**Goal:** a signed, installable Linux product with Kiro, with honest public claims.
 
-18.1. Signed deb and rpm (cosign + SLSA provenance); signed MSI and service (Authenticode).
+18.1. Signed deb and rpm (cosign + SLSA provenance). Signed MSI and service (Authenticode) come after the first release.
 18.2. AppArmor profile and guidance for Ubuntu 24.04+.
 18.3. Public threat model and known-risks page (PRD §11).
 18.4. Published escape corpus with "N/N pass on corpus vX" results.
 18.5. `cargo vet` added to CI.
 
 **Done when:**
-- Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04 and Windows 11.
-- 100% of the escape corpus passes on both OSes.
+- Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04.
+- 100% of the escape corpus passes on Linux.
 
 ---
 
@@ -382,7 +390,7 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 - Each phase is built on its own branch, fully tested, and delivered as exactly one PR. The user reviews it. **Never merge a PR without the user's explicit permission for that PR.** Full rules: "One phase, one PR" in `.kiro/steering/organization.md`.
 - A phase becomes `done` only after the user merges its PR. While waiting, its status is `in-review (PR #<n>)`.
-- Start a phase only when the previous phase (in number order) is `done`, except Phase 6 as noted above.
+- Start a phase only when the previous phase (in number order) is `done`, except the deferred phases (6, 13, 16, 17), which are skipped until after the first release.
 - Before a phase starts, check its **Blocked by** line and resolve or ask about each open question.
 - Every phase ends with tests and a runnable demo (`tech.md`).
 - When a phase finishes: set its status to `done`, record decisions in `DECISIONS.md`, and save an LTM checkpoint: `python3 ltm/bin/ltm.py checkpoint --summary "Phase N done: <name>"`.
