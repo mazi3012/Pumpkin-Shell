@@ -255,6 +255,12 @@ Steps: 9.1 to 9.4 and 9.6 are in the branch. Test results are in the Phase 9 pul
 
 **Done when:** PRD scenarios 3, 4 and 8 pass.
 
+Status of that line (2026-11-21):
+- Scenario 8 (`rm -rf src/`: `WS-MASS-DELETE`, `restore` recovers): [x] in the real sandbox (`a_mass_delete_inside_the_sandbox_is_found_and_restored`).
+- Scenario 3 (a README injection enables auto-approve: write staged, CRITICAL alert, IDE paused): [~] the write is staged and the CRITICAL finding is raised (`scenario_3_enabling_auto_approve_is_staged_and_critical`). **"IDE paused" is not done: pausing is Phase 11 (11.5).** The finding is raised when the IDE exits, not live.
+- Scenario 4 (the agent creates a test-on-save hook: works in-session; user approves it in review): [~] the hook works in-session, is staged, and is CRITICAL (`scenario_4_a_new_command_hook_is_staged_and_critical`). **"User approves it in review" is not done: `pumpkin-shell review` is Phase 11 (11.6).**
+- Not yet run: the whole `pumpkin-shell ide` flow with a real IDE (snapshot line, decoys, staged mounts, exit report). The pieces are tested in the real sandbox; the glue in `ide.rs` is only compiled and linted. A run with the user is planned.
+
 ---
 
 ## Phase 11: Notifications and review
