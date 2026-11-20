@@ -492,6 +492,28 @@ fn a_read_of_a_decoy_inside_the_sandbox_is_seen_on_the_host() -> TestResult {
     Ok(())
 }
 
+/// Copying a decoy opens it, and a hard link is the same inode, so both are
+/// seen. Only the later use of a copy is out of sight.
+#[test]
+fn copying_or_hard_linking_a_decoy_is_still_seen() -> TestResult {
+    for script in [
+        "cp /home/sandbox/.aws/credentials /tmp/stolen; exit 0\n",
+        "ln /home/sandbox/.aws/credentials /home/sandbox/link && cat /home/sandbox/link >/dev/null; exit 0\n",
+    ] {
+        let layout = Layout::new()?;
+        let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+        let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+        let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+        assert!(
+            backend()?.run(&layout.spec_running(script))?.success(),
+            "{script}"
+        );
+        let seen = watch.wait(3000)?;
+        assert_eq!(seen, vec![decoys[1].path.clone()], "{script}: {seen:?}");
+    }
+    Ok(())
+}
+
 #[test]
 fn a_session_that_reads_no_decoy_reports_none() -> TestResult {
     let layout = Layout::new()?;
