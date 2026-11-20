@@ -12,6 +12,7 @@
 //! Files listed by the repo's `.gitignore` are not in the snapshot. Restore
 //! writes into a new, empty directory and never into the repo.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -199,6 +200,143 @@ pub fn check_mass_delete(
         ),
         fix: format!("Restore them with: pumpkin-shell restore {session_id}"),
     }))
+}
+
+/// The blob id of every file in the snapshot, by path (PRD FR-WS, watched
+/// paths). Symbolic links are blobs in git too, so they are included.
+///
+/// # Errors
+/// Fails when git fails or its output is not read.
+pub fn blob_ids(session_dir: &Path) -> Result<BTreeMap<String, String>, SnapshotError> {
+    let bare = session_dir.join(SNAPSHOT_DIR);
+    let mut list = git(session_dir)?;
+    list.arg(format!("--git-dir={}", bare.display()))
+        .args(["ls-tree", "-r", "-z", "HEAD"]);
+    let output = list.output().map_err(|source| SnapshotError::Io {
+        context: "cannot run git ls-tree".to_owned(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(SnapshotError::Git(format!(
+            "ls-tree failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let mut out = BTreeMap::new();
+    for record in output.stdout.split(|byte| *byte == 0) {
+        // `<mode> SP <type> SP <sha> TAB <path>`
+        let Some(tab) = record.iter().position(|byte| *byte == b'\t') else {
+            continue;
+        };
+        let (meta, path) = record.split_at(tab);
+        let fields: Vec<&[u8]> = meta.split(|byte| *byte == b' ').collect();
+        if fields.len() == 3 && fields[1] == b"blob" {
+            let sha = String::from_utf8_lossy(fields[2]).into_owned();
+            out.insert(String::from_utf8_lossy(&path[1..]).into_owned(), sha);
+        }
+    }
+    Ok(out)
+}
+
+/// The paths in `repo` that git ignores under its `.gitignore` rules, read
+/// with the snapshot's empty config. They are not part of any snapshot.
+///
+/// # Errors
+/// Fails when git fails or its output is not read.
+pub fn ignored_paths(session_dir: &Path, repo: &Path) -> Result<BTreeSet<String>, SnapshotError> {
+    let bare = session_dir.join(SNAPSHOT_DIR);
+    let mut list = git(session_dir)?;
+    list.arg(format!("--git-dir={}", bare.display()))
+        .arg(format!("--work-tree={}", repo.display()))
+        .args([
+            "ls-files",
+            "-z",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+        ]);
+    let output = list.output().map_err(|source| SnapshotError::Io {
+        context: "cannot run git ls-files".to_owned(),
+        source,
+    })?;
+    if !output.status.success() {
+        return Err(SnapshotError::Git(format!(
+            "ls-files failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect())
+}
+
+/// The git blob id of each file, as git would store it. Filters are off, so
+/// the bytes are hashed as they are. Paths with a newline cannot be sent
+/// through stdin and are reported as an error.
+///
+/// # Errors
+/// Fails when git fails, or a path has a newline.
+pub fn hash_files(session_dir: &Path, files: &[PathBuf]) -> Result<Vec<String>, SnapshotError> {
+    if files.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut input = Vec::new();
+    for file in files {
+        let text = file.to_string_lossy();
+        if text.contains('\n') {
+            return Err(SnapshotError::Git(format!(
+                "{} has a newline in its name",
+                file.display()
+            )));
+        }
+        input.extend_from_slice(text.as_bytes());
+        input.push(b'\n');
+    }
+    let mut hash = git(session_dir)?;
+    hash.args(["hash-object", "--no-filters", "--stdin-paths"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = hash.spawn().map_err(|source| SnapshotError::Io {
+        context: "cannot run git hash-object".to_owned(),
+        source,
+    })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        stdin
+            .write_all(&input)
+            .map_err(|source| SnapshotError::Io {
+                context: "cannot send paths to git hash-object".to_owned(),
+                source,
+            })?;
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|source| SnapshotError::Io {
+            context: "cannot read git hash-object".to_owned(),
+            source,
+        })?;
+    if !output.status.success() {
+        return Err(SnapshotError::Git(format!(
+            "hash-object failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    let ids: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect();
+    if ids.len() != files.len() {
+        return Err(SnapshotError::Git(format!(
+            "hash-object returned {} ids for {} files",
+            ids.len(),
+            files.len()
+        )));
+    }
+    Ok(ids)
 }
 
 /// Whether `text` is a session id: 32 lowercase hex digits, as made by

