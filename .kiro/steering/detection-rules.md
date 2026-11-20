@@ -35,7 +35,7 @@ Source of truth: PRD §7 FR-DET (#[[file:docs/PRD.md]]). If this file and the PR
 | WS-PROTECTED-WRITE | Write to a protected path | HIGH | Staged for review |
 | WS-AUTOAPPROVE | `chat.tools.autoApprove`, MCP `autoApprove: ["*"]`, new MCP server, new Kiro command hook | CRITICAL | Staged, pause |
 | WS-HIDDEN-UNICODE | Tag chars U+E0000–U+E007F, bidi controls, zero-width chars | HIGH | Alert only (`scan --ci` fails) |
-| WS-WATCHED-CHANGE | Change to a watched path | HIGH | Shown in review |
+| WS-WATCHED-CHANGE | Change to a watched path, held in staging | HIGH | Held for review |
 | WS-MCP-SERVER | Static `scan`: an MCP server is configured (inventory) | NOTICE | Listed; never fails `--ci` by default |
 | WS-KIRO-HOOK | Static `scan`: a Kiro hook runs a shell command | WARN | Alert only |
 | WS-FOLDER-OPEN-TASK | `.vscode/tasks.json` task with `runOn: folderOpen` | HIGH | Alert only (`scan --ci` fails) |

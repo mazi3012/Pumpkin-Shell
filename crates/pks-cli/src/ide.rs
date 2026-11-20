@@ -302,9 +302,9 @@ impl Session {
         }
     }
 
-    /// After the IDE exits: reports writes to protected paths (kept in
-    /// staging, `staged`), a mass delete against the snapshot (`alert`), and
-    /// changes to watched paths (`watched`).
+    /// After the IDE exits: reports writes to protected and watched paths (kept
+    /// in staging, verdict `staged`) and a mass delete against the snapshot
+    /// (`alert`).
     fn check_workspace(&mut self, repo: &Path) {
         if let Some(staging) = self.staging.take() {
             // Checks the sandbox's writes to protected paths, then ends the staging.
@@ -318,15 +318,6 @@ impl Session {
             Err(error) => {
                 eprintln!("ide: could not check the workspace against the snapshot: {error}");
             }
-        }
-        // Watched paths the sandbox changed: shown for review, not blocked.
-        match pks_core::workspace::watched_findings(repo, &self.dir) {
-            Ok(findings) => {
-                for finding in findings {
-                    self.report(&finding, "watched");
-                }
-            }
-            Err(error) => eprintln!("ide: could not check the watched paths: {error}"),
         }
     }
     /// Stops the proxy, closes the log with its signed checkpoint, and removes

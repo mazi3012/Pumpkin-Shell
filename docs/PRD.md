@@ -141,7 +141,7 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 
 ### FR-WS: Workspace integrity
 - **Protected (staged for review):** `.git/hooks`, `.git/config`, the `core.hooksPath` target; `.envrc`, `.yarnrc.yml`, `.npmrc`; `.vscode/`, `.cursor/`, `.windsurf/`, `.kiro/settings`, `.kiro/hooks`, `.mcp.json`; `pumpkin-shell.toml`; the IDE's user-level `settings.json` and `mcp.json` in its sandboxed home.
-- **Watched (editable, always shown in review):** `.github/workflows`, `package.json` scripts and git/URL deps, `Makefile`, `Dockerfile`, `.devcontainer`, `conftest.py`, `setup.py`, `.pre-commit-config.yaml`, `.kiro/steering`, `AGENTS.md`, `.cursorrules`; on Windows also `*.lnk`, `desktop.ini`, NTFS alternate data streams.
+- **Watched (held for review):** the sandbox works on a staged copy of each watched path, as for protected paths. Its writes are not applied to the repo until the user accepts them, and each changed path is a HIGH `WS-WATCHED-CHANGE`. Symbolic links and oversized trees are refused as for protected paths. The watched paths: `.github/workflows`, `package.json` scripts and git/URL deps, `Makefile`, `Dockerfile`, `.devcontainer`, `conftest.py`, `setup.py`, `.pre-commit-config.yaml`, `.kiro/steering`, `AGENTS.md`, `.cursorrules`; on Windows also `*.lnk`, `desktop.ini`, NTFS alternate data streams.
 - **Snapshot before launch:** working tree including untracked non-ignored files, committed via a temporary index and bundled to Pumpkin-Shell's data dir. `pumpkin-shell restore <sid>` recovers it.
 - **Decoys:** fake `id_ed25519`, AWS credentials and `gh` `hosts.yml` with unique markers in the sandboxed home.
 
@@ -164,7 +164,7 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 | WS-PROTECTED-WRITE | HIGH; staged |
 | WS-AUTOAPPROVE (`chat.tools.autoApprove`, MCP `autoApprove: ["*"]`, new MCP server, new Kiro command hook) | CRITICAL; staged, pause |
 | WS-HIDDEN-UNICODE (tag chars U+E0000–E007F, bidi controls, zero-width) | HIGH |
-| WS-WATCHED-CHANGE | HIGH; shown in review |
+| WS-WATCHED-CHANGE | HIGH; held for review |
 | WS-MCP-SERVER (static `scan`: an MCP server is configured; inventory only) | NOTICE |
 | WS-KIRO-HOOK (static `scan`: a Kiro hook runs a shell command) | WARN |
 | WS-FOLDER-OPEN-TASK (`.vscode/tasks.json` task with `runOn: folderOpen`) | HIGH |
