@@ -201,6 +201,63 @@ pub fn check_mass_delete(
     }))
 }
 
+/// The files in `repo` that were added or changed since the snapshot, as
+/// `/`-separated paths from the repo root. Files the repo's `.gitignore`
+/// excludes are not listed, as in the snapshot itself.
+///
+/// A temporary index inside the session directory is used, so neither the
+/// snapshot nor the repo's own index is written.
+///
+/// # Errors
+/// Fails when git fails or its output is not read.
+pub fn changed_files(repo: &Path, session_dir: &Path) -> Result<Vec<String>, SnapshotError> {
+    let bare = session_dir.join(SNAPSHOT_DIR);
+    let index = session_dir.join("compare.index");
+    let _ = fs::remove_file(&index);
+    let with_index = |mut command: Command| {
+        command.env("GIT_INDEX_FILE", &index);
+        command
+    };
+
+    let mut read = with_index(git(session_dir)?);
+    read.arg(format!("--git-dir={}", bare.display()))
+        .args(["read-tree", "HEAD"]);
+    run(read, "read-tree")?;
+
+    let mut add = with_index(git(session_dir)?);
+    add.arg(format!("--git-dir={}", bare.display()))
+        .arg(format!("--work-tree={}", repo.display()))
+        .args(["add", "--all"]);
+    run(add, "add")?;
+
+    let mut diff = with_index(git(session_dir)?);
+    diff.arg(format!("--git-dir={}", bare.display())).args([
+        "diff",
+        "--cached",
+        "--name-only",
+        "-z",
+        "--diff-filter=AM",
+        "HEAD",
+    ]);
+    let output = diff.output().map_err(|source| SnapshotError::Io {
+        context: "cannot run git diff".to_owned(),
+        source,
+    })?;
+    let _ = fs::remove_file(&index);
+    if !output.status.success() {
+        return Err(SnapshotError::Git(format!(
+            "diff failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        )));
+    }
+    Ok(output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|name| !name.is_empty())
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect())
+}
+
 /// Whether `text` is a session id: 32 lowercase hex digits, as made by
 /// `new_session_id`. Checked before it names any directory.
 #[must_use]
@@ -433,6 +490,31 @@ mod tests {
             fs::remove_file(repo.join(format!("f{index}.txt")))?;
         }
         assert!(check_mass_delete(&repo, &session, "sid")?.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn changed_files_lists_added_and_modified_files_but_not_ignored_or_removed_ones() -> TestResult
+    {
+        let root = tempfile::tempdir()?;
+        let repo = root.path().join("repo");
+        write(&repo.join("keep.txt"), "same\n")?;
+        write(&repo.join("edit.txt"), "before\n")?;
+        write(&repo.join("gone.txt"), "bye\n")?;
+        write(&repo.join(".gitignore"), "ignored.log\n")?;
+        let session = root.path().join("session");
+        fs::create_dir_all(&session)?;
+        create(&repo, &session)?;
+        assert!(changed_files(&repo, &session)?.is_empty());
+        write(&repo.join("edit.txt"), "after\n")?;
+        write(&repo.join("src/new.rs"), "fn main() {}\n")?;
+        write(&repo.join("ignored.log"), "noise\n")?;
+        fs::remove_file(repo.join("gone.txt"))?;
+        let mut changed = changed_files(&repo, &session)?;
+        changed.sort();
+        assert_eq!(changed, ["edit.txt", "src/new.rs"]);
+        // Neither the snapshot nor the repo's own index was written.
+        assert!(!session.join("compare.index").exists());
         Ok(())
     }
 }

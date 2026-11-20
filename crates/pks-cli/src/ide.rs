@@ -327,14 +327,18 @@ impl Session {
     }
 
     /// After the IDE exits: reports writes to protected and watched paths (kept
-    /// in staging, verdict `staged`) and a mass delete against the snapshot
-    /// (`alert`).
+    /// in staging, verdict `staged`), secrets written into the repo, and a
+    /// mass delete against the snapshot (`alert`).
     fn check_workspace(&mut self, repo: &Path) {
         if let Some(staging) = self.staging.take() {
             // Checks the sandbox's writes to protected paths, then ends the staging.
             for finding in pks_scan::staged::review(staging) {
                 self.report(&finding, "staged");
             }
+        }
+        // Secrets the sandbox wrote into the repo (values are never printed).
+        for finding in pks_scan::staged::repo_secret_findings(repo, &self.dir) {
+            self.report(&finding, "alert");
         }
         match pks_core::snapshot::check_mass_delete(repo, &self.dir, &self.id) {
             Ok(Some(finding)) => self.report(&finding, "alert"),

@@ -529,6 +529,46 @@ fn a_session_that_reads_no_decoy_reports_none() -> TestResult {
     Ok(())
 }
 
+/// PRD FR-DET WS-SECRET-WRITTEN: a token written into a repo file, and into a
+/// staged `.npmrc`, is reported by file and line, and its value never appears.
+#[test]
+fn a_secret_written_in_the_sandbox_is_reported_without_its_value() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join("src"))?;
+    fs::write(repo.join("src/lib.rs"), "// empty\n")?;
+    let session = tempfile::tempdir()?;
+    pks_core::snapshot::create(repo, session.path())?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    // Built at run time, so the test file holds nothing token-shaped.
+    let token = format!("ghp_{}", "A1b2".repeat(9));
+    let script = format!(
+        "echo 'const T = \"{token}\";' > /workspace/src/lib.rs\necho '//registry.npmjs.org/:_authToken={token}' > /workspace/.npmrc\nexit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    let mut findings = pks_scan::staged::repo_secret_findings(repo, session.path());
+    findings.extend(pks_scan::staged::review(staging));
+    let secrets: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-SECRET-WRITTEN")
+        .collect();
+    let targets: Vec<&str> = secrets.iter().map(|f| f.target.as_str()).collect();
+    assert_eq!(targets, ["src/lib.rs", ".npmrc"], "{findings:?}");
+    assert!(secrets.iter().all(|f| f.severity == Severity::High));
+    assert!(
+        !format!("{findings:?}").contains(&token),
+        "the secret value was printed"
+    );
+    // The staged .npmrc never reached the repo.
+    assert!(
+        !repo.join(".npmrc").exists() || !fs::read_to_string(repo.join(".npmrc"))?.contains("ghp_")
+    );
+    Ok(())
+}
+
 /// Two free loopback ports. Each listener is kept open by the caller.
 fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
