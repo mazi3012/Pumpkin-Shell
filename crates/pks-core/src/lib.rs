@@ -38,7 +38,7 @@ impl RuleId {
 
 /// How serious a finding is, from least to most serious. Levels are added in
 /// the phase that first uses them; `Info` has no user yet.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, serde::Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
 pub enum Severity {
     /// Listed for the user's information. Does not need action.

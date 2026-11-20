@@ -23,6 +23,7 @@ serde_json.workspace = true
 # Sandbox (Phase 8); Windows gets its backend in Phase 16.
 pks-sandbox = { path = "../pks-sandbox", version = "0.0.0" }
 pks-proxy = { path = "../pks-proxy", version = "0.0.0" }
+pks-detect = { path = "../pks-detect", version = "0.0.0" }
 landlock.workspace = true
 libc.workspace = true
 

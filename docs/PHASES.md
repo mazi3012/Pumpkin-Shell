@@ -19,8 +19,8 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
-| 10 | Workspace integrity (Linux) | T8 | Linux | | in-progress (branch `phase-10-workspace-integrity`) |
-| 11 | Notifications and review | T9 | Linux | | todo |
+| 10 | Workspace integrity (Linux) | T8 | Linux | | done (PR #10 merged) |
+| 11 | Notifications and review | T9 | Linux | | in-progress (branch `phase-11-notifications-review`) |
 | 12 | Brokers | T10 | Linux | | todo |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | todo |
