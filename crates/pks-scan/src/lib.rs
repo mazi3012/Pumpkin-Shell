@@ -11,6 +11,7 @@ mod ads;
 mod configs;
 mod fs_safe;
 mod git;
+pub mod staged;
 mod unicode;
 mod walk;
 

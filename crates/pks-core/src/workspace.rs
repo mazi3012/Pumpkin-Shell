@@ -141,6 +141,17 @@ pub struct Staging {
     protected: Vec<Protected>,
     /// Paths made in the repo as mount points, in creation order.
     created: Vec<PathBuf>,
+    /// The session's staging root. Every staged file is under it.
+    root: PathBuf,
+}
+
+/// A regular file inside a protected path that the sandbox added or changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangedFile {
+    /// Path from the repo root, `/`-separated.
+    pub rel: String,
+    /// The staged copy on the host.
+    pub staged: PathBuf,
 }
 
 fn is_symlink(path: &Path) -> bool {
@@ -553,6 +564,7 @@ fn prepare_inner(
         mounts,
         protected,
         created: created.clone(),
+        root,
     })
 }
 
@@ -596,6 +608,35 @@ fn changes_in(
 }
 
 impl Staging {
+    /// The regular files the sandbox added or changed in a protected path.
+    /// Removed files and symbolic links are not listed.
+    ///
+    /// # Errors
+    /// Fails when a staged tree cannot be read.
+    pub fn changed_files(&self) -> Result<Vec<ChangedFile>, WorkspaceError> {
+        let mut out = Vec::new();
+        for item in &self.protected {
+            for change in changes_in(&item.rel, &item.baseline, &item.staged)? {
+                if change.kind == ChangeKind::Removed {
+                    continue;
+                }
+                let staged = self.root.join(&change.path);
+                let is_regular = staged
+                    .symlink_metadata()
+                    .is_ok_and(|meta| meta.file_type().is_file());
+                if is_regular {
+                    out.push(ChangedFile {
+                        rel: change.path,
+                        staged,
+                    });
+                }
+            }
+        }
+        out.sort_by(|a, b| a.rel.cmp(&b.rel));
+        out.dedup();
+        Ok(out)
+    }
+
     /// What the sandbox binds, parents first.
     #[must_use]
     pub fn mounts(&self) -> &[Mount] {
@@ -1046,6 +1087,42 @@ mod tests {
             "{:?}",
             rels(&staging)
         );
+        let _ = staging.finish();
+        Ok(())
+    }
+
+    #[test]
+    fn changed_files_lists_added_and_modified_regular_files_only() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = repo(root.path())?;
+        let dir = session(root.path())?;
+        let staging = prepare(&repo, &dir)?;
+        let staged = dir.join("staging");
+        write(&staged.join(".vscode/settings.json"), "{\"x\":1}\n")?;
+        write(&staged.join(".kiro/hooks/new.json"), "{}\n")?;
+        fs::remove_file(staged.join(".git/hooks/pre-commit.sample"))?;
+        let files = staging.changed_files()?;
+        let rels: Vec<&str> = files.iter().map(|f| f.rel.as_str()).collect();
+        assert_eq!(
+            rels,
+            [".kiro/hooks/new.json", ".vscode/settings.json"],
+            "{rels:?}"
+        );
+        assert_eq!(fs::read_to_string(&files[1].staged)?, "{\"x\":1}\n");
+        assert!(files.iter().all(|f| f.staged.starts_with(&staged)));
+        let _ = staging.finish();
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn changed_files_skips_symbolic_links() -> TestResult {
+        let root = tempfile::tempdir()?;
+        let repo = repo(root.path())?;
+        let dir = session(root.path())?;
+        let staging = prepare(&repo, &dir)?;
+        std::os::unix::fs::symlink("/etc/passwd", dir.join("staging/.vscode/link"))?;
+        assert!(staging.changed_files()?.is_empty());
         let _ = staging.finish();
         Ok(())
     }

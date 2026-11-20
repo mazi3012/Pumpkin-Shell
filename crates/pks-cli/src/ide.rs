@@ -306,7 +306,8 @@ impl Session {
     /// staging, `staged`), and a mass delete against the snapshot (`alert`).
     fn check_workspace(&mut self, repo: &Path) {
         if let Some(staging) = self.staging.take() {
-            for finding in staging.finish() {
+            // Checks the sandbox's writes to protected paths, then ends the staging.
+            for finding in pks_scan::staged::review(staging) {
                 self.report(&finding, "staged");
             }
         }

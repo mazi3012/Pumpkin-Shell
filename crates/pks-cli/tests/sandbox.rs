@@ -10,6 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
+use pks_core::{Finding, Severity};
 use pks_sandbox::linux::LinuxBackend;
 use pks_sandbox::{IdeInstall, LaunchSpec, Roots, SandboxBackend};
 use std::os::unix::net::UnixListener;
@@ -369,6 +370,83 @@ fn deleting_a_protected_path_never_touches_the_repo() -> TestResult {
     assert!(targets.contains(&".vscode"), "{targets:?}");
     assert!(targets.contains(&".git/hooks"), "{targets:?}");
     Ok(())
+}
+
+/// PRD scenario 3: a write inside the sandbox turns on `chat.tools.autoApprove`.
+/// The repo keeps its settings; the change is staged, and it is CRITICAL.
+#[test]
+fn scenario_3_enabling_auto_approve_is_staged_and_critical() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let mut spec = layout.spec_running(
+        "echo '{\"chat.tools.autoApprove\": true}' > /workspace/.vscode/settings.json; exit 0\n",
+    );
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    let findings = pks_scan::staged::review(staging);
+    let critical: Vec<&Finding> = findings
+        .iter()
+        .filter(|f| f.rule.as_str() == "WS-AUTOAPPROVE")
+        .collect();
+    assert_eq!(critical.len(), 1, "{findings:?}");
+    assert_eq!(critical[0].severity, Severity::Critical);
+    assert_eq!(critical[0].target, ".vscode/settings.json");
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.rule.as_str() == "WS-PROTECTED-WRITE")
+    );
+    Ok(())
+}
+
+/// PRD scenario 4: the agent creates a command hook in `.kiro/hooks`. It is
+/// staged, it is CRITICAL, and it is not in the repo, so it cannot run on the
+/// host.
+#[test]
+fn scenario_4_a_new_command_hook_is_staged_and_critical() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join("src"))?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let hook = r#"{"version":"v1","hooks":[{"name":"test-on-save","trigger":"Save","action":{"type":"command","command":"touch /workspace/src/ran-on-host"}}]}"#;
+    let script = format!(
+        "mkdir -p /workspace/.kiro/hooks && echo '{hook}' > /workspace/.kiro/hooks/test-on-save.json; exit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
+    spec.binds = binds_of(&staging);
+    assert!(backend()?.run(&spec)?.success());
+
+    assert!(!repo.join(".kiro/hooks/test-on-save.json").exists());
+    let findings = pks_scan::staged::review(staging);
+    assert!(
+        findings.iter().any(|f| f.rule.as_str() == "WS-AUTOAPPROVE"
+            && f.severity == Severity::Critical
+            && f.target == ".kiro/hooks/test-on-save.json"),
+        "{findings:?}"
+    );
+    assert!(!repo.join("src/ran-on-host").exists());
+    Ok(())
+}
+
+fn binds_of(staging: &pks_core::workspace::Staging) -> Vec<pks_sandbox::Bind> {
+    staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect()
 }
 
 /// Two free loopback ports. Each listener is kept open by the caller.
