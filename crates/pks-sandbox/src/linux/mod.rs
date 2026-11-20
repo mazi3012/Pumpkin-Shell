@@ -5,6 +5,7 @@ pub mod bwrap;
 pub mod display;
 pub mod init;
 pub mod relay;
+pub mod watch;
 
 use std::fs;
 use std::io::Write;

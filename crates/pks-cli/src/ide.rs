@@ -94,6 +94,18 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
     if let Err(error) = create_private_dir(&ide_home) {
         return setup(format!("cannot create {}: {error}", ide_home.display()));
     }
+    // Decoy credentials in the IDE's home (PRD FR-WS). They are written fresh
+    // for this session, and an access to one is reported while the IDE runs.
+    let decoys = match pks_core::decoy::plant(&ide_home) {
+        Ok(decoys) => decoys,
+        Err(error) => return setup(format!("cannot write the decoy credentials: {error}")),
+    };
+    let decoy_watch = match pks_sandbox::linux::watch::AccessWatch::new(
+        &decoys.iter().map(|d| d.path.clone()).collect::<Vec<_>>(),
+    ) {
+        Ok(watch) => watch,
+        Err(error) => return setup(format!("cannot watch the decoy credentials: {error}")),
+    };
     let spec = LaunchSpec {
         repo: repo.to_path_buf(),
         ide: spec_install,
@@ -126,7 +138,40 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         backend.name(),
         session.id
     );
+    let stop_watch = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watch_thread = {
+        let stop = std::sync::Arc::clone(&stop_watch);
+        let log = std::sync::Arc::clone(&session.log);
+        let policy_hash = session.policy_hash.clone();
+        let names: Vec<(PathBuf, &'static str)> =
+            decoys.iter().map(|d| (d.path.clone(), d.name)).collect();
+        std::thread::spawn(move || {
+            let mut reported: Vec<&'static str> = Vec::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                match decoy_watch.wait(200) {
+                    Ok(paths) => {
+                        for path in paths {
+                            let Some((_, name)) = names.iter().find(|(p, _)| *p == path) else {
+                                continue;
+                            };
+                            if !reported.contains(name) {
+                                reported.push(name);
+                                let finding = pks_core::decoy::read_finding(name);
+                                emit(&log, &policy_hash, &finding, "alert");
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        eprintln!("ide: the decoy watch stopped: {error}");
+                        break;
+                    }
+                }
+            }
+        })
+    };
     let result = backend.run(&spec);
+    stop_watch.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = watch_thread.join();
     session.check_workspace(repo);
     session.close();
     match result {
@@ -278,28 +323,7 @@ impl Session {
 
     /// Prints a finding and writes it to the signed log.
     fn report(&self, finding: &pks_core::Finding, verdict: &str) {
-        eprintln!(
-            "[{:?}] {} {}: {}",
-            finding.severity,
-            finding.rule.as_str(),
-            finding.target,
-            finding.message
-        );
-        eprintln!("ide: {}", finding.fix);
-        if let Ok(mut guard) = self.log.lock()
-            && let Some(logger) = guard.as_mut()
-        {
-            let _ = logger.append(
-                &Record {
-                    policy_hash: &self.policy_hash,
-                    layer: "ws",
-                    target: &finding.target,
-                    rule: finding.rule.as_str(),
-                    verdict,
-                },
-                now_ms(),
-            );
-        }
+        emit(&self.log, &self.policy_hash, finding, verdict);
     }
 
     /// After the IDE exits: reports writes to protected and watched paths (kept
@@ -357,6 +381,39 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+/// Prints a finding and writes it to the session's signed log. Used by the
+/// session and by the decoy watch thread, so both log the same way.
+#[cfg(target_os = "linux")]
+fn emit(
+    log: &std::sync::Mutex<Option<pks_core::log::Logger>>,
+    policy_hash: &str,
+    finding: &pks_core::Finding,
+    verdict: &str,
+) {
+    eprintln!(
+        "[{:?}] {} {}: {}",
+        finding.severity,
+        finding.rule.as_str(),
+        finding.target,
+        finding.message
+    );
+    eprintln!("ide: {}", finding.fix);
+    if let Ok(mut guard) = log.lock()
+        && let Some(logger) = guard.as_mut()
+    {
+        let _ = logger.append(
+            &Record {
+                policy_hash,
+                layer: "ws",
+                target: &finding.target,
+                rule: finding.rule.as_str(),
+                verdict,
+            },
+            now_ms(),
+        );
+    }
 }
 
 /// Asks in the terminal. With no terminal (headless), nobody can answer, and

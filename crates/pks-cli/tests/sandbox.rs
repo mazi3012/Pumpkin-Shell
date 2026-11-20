@@ -476,6 +476,37 @@ fn an_edit_to_a_watched_file_is_held_and_the_repo_is_unchanged() -> TestResult {
     Ok(())
 }
 
+/// PRD FR-WS "Decoys": a program inside the sandbox reads a decoy credential.
+/// The host sees the access. A session that reads nothing sees nothing.
+#[test]
+fn a_read_of_a_decoy_inside_the_sandbox_is_seen_on_the_host() -> TestResult {
+    let layout = Layout::new()?;
+    let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+    let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+    let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+    let status = backend()?
+        .run(&layout.spec_running("cat /home/sandbox/.ssh/id_ed25519 >/dev/null; exit 0\n"))?;
+    assert!(status.success(), "{status}");
+    let seen = watch.wait(3000)?;
+    assert_eq!(seen, vec![decoys[0].path.clone()], "{seen:?}");
+    Ok(())
+}
+
+#[test]
+fn a_session_that_reads_no_decoy_reports_none() -> TestResult {
+    let layout = Layout::new()?;
+    let decoys = pks_core::decoy::plant(&layout.ide_home)?;
+    let paths: Vec<PathBuf> = decoys.iter().map(|d| d.path.clone()).collect();
+    let watch = pks_sandbox::linux::watch::AccessWatch::new(&paths)?;
+    let status =
+        backend()?.run(&layout.spec_running("ls /home/sandbox/.ssh >/dev/null; exit 0\n"))?;
+    assert!(status.success(), "{status}");
+    // `ls` reads the directory, not the file: no decoy is opened.
+    let seen = watch.wait(1000)?;
+    assert!(seen.is_empty(), "{seen:?}");
+    Ok(())
+}
+
 /// Two free loopback ports. Each listener is kept open by the caller.
 fn bound_loopback() -> Result<(std::net::TcpListener, u16), std::io::Error> {
     let listener = std::net::TcpListener::bind("127.0.0.1:0")?;
