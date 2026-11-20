@@ -1,12 +1,12 @@
 # Pumpkin-Shell v1.0 PRD
 
-**A sandbox and tripwire system for AI-powered IDEs on Linux and Windows.**
+**A sandbox and tripwire system for AI-powered IDEs on Linux.**
 
 | | |
 |---|---|
-| Status | Canonical PRD. Supersedes `prd v1.md` (raw history, kept for reference) |
-| Platforms | Linux (x86_64, ARM64), Windows 10/11 (x64, ARM64). macOS out of scope |
-| IDEs | Kiro first, then VS Code, Cursor, Windsurf (all Code-OSS based) |
+| Status | Canonical PRD. Supersedes `prd v1.md` (raw history, kept for reference). First-release scope set 2026-11-21 (§5) |
+| Platforms | Linux (x86_64, ARM64) for the first release. Windows 10/11 (x64, ARM64) planned after it. macOS out of scope |
+| IDEs | Kiro for the first release. VS Code, Cursor, Windsurf (all Code-OSS based) planned after it |
 | Core language | Rust |
 | Repo | https://github.com/mazi3012/pumpkin-shell |
 
@@ -16,7 +16,7 @@ Claims marked `*` come from prior knowledge and must be verified before they are
 
 ## 0. Summary
 
-Pumpkin-Shell launches an IDE (Kiro, VS Code, Cursor or Windsurf) inside an OS-level sandbox. The sandbox covers the whole IDE: renderer, extension host, agent, terminals, MCP servers and hooks. Pumpkin-Shell does four things:
+Pumpkin-Shell launches an IDE (Kiro in the first release) inside an OS-level sandbox. The sandbox covers the whole IDE: renderer, extension host, agent, terminals, MCP servers and hooks. Pumpkin-Shell does four things:
 
 1. **Removes capabilities.** The IDE gets no host credentials, no unfiltered network, and no unreviewed writes to files that later run on the host.
 2. **Guards package installs.** A local npm/PyPI mirror applies a version cooldown, malware lookups, typosquat checks and hash verification.
@@ -71,10 +71,11 @@ Pumpkin-Shell launches an IDE (Kiro, VS Code, Cursor or Windsurf) inside an OS-l
 
 **In v1:**
 - Linux: Ubuntu 24.04+ (incl. Mint 22+), Debian 13+, Fedora 40+, Arch; x86_64 and ARM64 (matches [Kiro's supported list](https://kiro.dev/docs/getting-started/installation/))
-- Windows 10/11, x64 and ARM64
-- IDEs: Kiro, then VS Code, Cursor, Windsurf
+- IDE: Kiro only
 - `pumpkin-shell scan` (also in CI)
 - npm, pnpm, yarn, bun (npm registry); pip, uv, poetry (PyPI)
+
+**Not in the first release (2026-11-21):** Windows 10/11 and the Windows backend (§6.2), planned after the first release; VS Code, Cursor and Windsurf (Code-OSS adapter, Phase 13), planned after the first release.
 
 **Not in v1:** macOS; standalone CLI-agent commands; dev containers / Docker inside the sandbox; IDE auto-update inside the sandbox; TLS inspection; credential substitution in the proxy; cargo and Go registries.
 
@@ -110,7 +111,7 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 - **Auditing:** seccomp user-notification supervisor on the host for `execve` and `connect`.
 - **Ubuntu 24.04+:** AppArmor may restrict unprivileged user namespaces (`kernel.apparmor_restrict_unprivileged_userns`). `doctor` detects it and explains or installs the profile. (Linux Mint 22.3 ships with the restriction off.)
 
-### 6.2 Windows backend (admin once, at install)
+### 6.2 Windows backend (after the first release; admin once, at install)
 
 - **Sandbox user:** installer creates local non-admin user `pks-sandbox` and a signed `Pumpkin-Shell Service` (LocalSystem). The user's own profile is closed to other users by default, hiding `.ssh`, `.aws`, Credential Manager, DPAPI data and the OpenSSH agent pipe.
 - **Repo access:** at session start the service grants `pks-sandbox` modify rights on the repo, revokes them at session end, resets file ownership to the user, and sets `safe.directory` in the sandbox user's gitconfig (otherwise Git for Windows reports "dubious ownership").
@@ -205,9 +206,9 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 ### CLI
 `doctor`, `init`, `ide <kiro|code|cursor|windsurf> [path]`, `ide import <ide>` (settings + extensions, never tokens), `watch`, `allow`, `allow-write`, `resume`, `kill`, `review`, `restore`, `scan [--ci]`, `trust`, `policy check`, `policy suggest`, `log [verify]`, `test`.
 
-## 8. Acceptance scenarios (each on both OSes)
+## 8. Acceptance scenarios (each on Linux for the first release; Windows after it)
 
-1. **First run:** Ubuntu AppArmor restriction, or Windows without the service. `doctor` gives a one-step fix.
+1. **First run:** Ubuntu AppArmor restriction. `doctor` gives a one-step fix.
 2. **Kiro sign-in:** browser opens on the host, OAuth callback reaches the sandboxed Kiro, login persists in the sandboxed home.
 3. **README injection enables auto-approve:** write staged, CRITICAL alert, IDE paused.
 4. **Agent creates a test-on-save hook:** works in-session; user approves it in review.
@@ -216,14 +217,14 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 7. **Local Postgres on host port 5432:** NET-DIRECT-CONNECT with hint `host_ports = [5432]`.
 8. **`rm -rf src/`:** WS-MASS-DELETE; `restore` recovers.
 9. **`terraform destroy` in the IDE terminal:** fails for lack of credentials; HIGH alert.
-10. **Windows `schtasks /create` and WMI process-create:** flagged, still network-blocked, removed at session end.
+10. (After the first release.) **Windows `schtasks /create` and WMI process-create:** flagged, still network-blocked, removed at session end.
 11. **PR adds hidden Unicode to `.kiro/steering`:** `scan --ci` fails the GitHub Actions run.
 12. **`git push` from the IDE:** broker prompts with remote and branch.
 
 ## 9. Non-functional requirements
 
 - **Linux:** no root at runtime. Kernel 5.13+ (6.7+ recommended), bwrap 0.8+.
-- **Windows:** admin once at install; none per session.
+- **Windows (after the first release):** admin once at install; none per session.
 - **Performance:** launch overhead <1 s; mirror <+15% latency warm; auditing <5% on `npm test`; IDE feels native.
 - **Privacy / supply chain:** no telemetry; `cargo-deny`, `cargo-audit`, `cargo vet` in CI; signed releases (cosign + SLSA on Linux; Authenticode MSI and service on Windows); no `curl | sh` installer.
 
@@ -245,13 +246,13 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 
 ## 12. Build plan
 
-Linux first, then Windows. Tasks 2 and 3 are proofs of concept that the IDE runs at all inside each sandbox; they come first so the design can change before anything is built on top.
+First release: Linux and Kiro only (§5). Tasks 3, 11, 14 and 15 (Windows, and the three other IDEs) come after it. Tasks 2 and 3 are proofs of concept that the IDE runs at all inside each sandbox; they come first so the design can change before anything is built on top.
 
 | # | Task | Demo / exit criteria |
 |---|---|---|
 | 1 | Cargo workspace with `SandboxBackend` trait; CI on Linux + Windows runners (clippy, fmt, cargo-deny, cargo-audit); `doctor` (bwrap, userns, AppArmor, Landlock, seccomp, IDE install permissions; on Windows: service, sandbox user, WFP) | `pumpkin-shell doctor` on both OSes |
 | 2 | **Linux PoC:** Kiro in bwrap with display (Wayland, and X11 via nested server or opt-in), GPU, nested userns, stub proxy. Record every breakage and the minimum permission that fixes it | Kiro edits a file; `~/.ssh` unreadable from its terminal |
-| 3 | **Windows PoC:** Kiro as `pks-sandbox` in a Job Object with WFP filters by SID. Verify WMI/schtasks-spawned processes stay network-blocked and cleanup works | Kiro runs; `C:\Users\<you>\.ssh` denied; direct `curl` fails |
+| 3 | (After the first release.) **Windows PoC:** Kiro as `pks-sandbox` in a Job Object with WFP filters by SID. Verify WMI/schtasks-spawned processes stay network-blocked and cleanup works | Kiro runs; `C:\Users\<you>\.ssh` denied; direct `curl` fails |
 | 4 | `pumpkin-shell scan` → **v0.1**: hidden Unicode, `autoApprove`, MCP servers, Kiro command hooks, `folderOpen` tasks, `yarnPath`, ADS; `--ci` exit code | Poisoned fixture repo yields expected findings |
 | 5 | Policy (tighten-only merge, `trust`) and signed log (ed25519 hash chain, checkpoint, `log verify`) | Editing a log line fails `log verify` |
 | 6 | Linux `ide` backend: read-only root, rw repo, persistent IDE home, filtered env, no network | `pumpkin-shell ide kiro .` |
@@ -259,11 +260,11 @@ Linux first, then Windows. Tasks 2 and 3 are proofs of concept that the IDE runs
 | 8 | Workspace integrity on Linux: staged writes, quarantine, snapshot/restore, decoys | Scenarios 3, 4, 8 |
 | 9 | Notifications and review: severity engine, dedup, `watch`, `notify-send`, webhook, pause, review/approve | Decoy read → desktop alert; CRITICAL pauses Kiro |
 | 10 | Brokers: URL open, OAuth callback relay, git push approval | Scenarios 2, 12 |
-| 11 | Code-OSS adapter, `ide import`, profiles for Kiro, VS Code, Cursor, Windsurf → **Linux v0.5** | All four IDEs run under Pumpkin-Shell |
+| 11 | (After the first release.) Code-OSS adapter, `ide import`, profiles for VS Code, Cursor, Windsurf (Kiro's profile comes from tasks 6 and 7) | All four IDEs run under Pumpkin-Shell |
 | 12 | npm + PyPI mirror: cooldown, age, OSV, typosquat, integrity, ignore-scripts | Scenario 5; FP benchmark on top 1,000 packages |
 | 13 | Linux exec/connect auditing (seccomp supervisor) and EXEC / NET-DIRECT-CONNECT rules | Scenarios 7, 9; monitor death kills session |
-| 14 | Windows enforcement: signed service + MSI, sandbox user, repo ACL grant/revoke, ownership reset, `safe.directory`, deny-ACL staging, WFP, Job Object, persistence cleanup | `pumpkin-shell ide kiro .` on Windows; scenario 10 |
-| 15 | Windows parity: proxy settings, named-pipe brokers, toasts, ETW, WFP audit, `ReadDirectoryChangesW`, pause | All 12 scenarios on Windows |
-| 16 | **v1.0** release: signed deb/rpm and MSI, AppArmor guidance, threat model, published escape corpus | Install → protected Kiro session in <5 min on Ubuntu 24.04 and Windows 11 |
+| 14 | (After the first release.) Windows enforcement: signed service + MSI, sandbox user, repo ACL grant/revoke, ownership reset, `safe.directory`, deny-ACL staging, WFP, Job Object, persistence cleanup | `pumpkin-shell ide kiro .` on Windows; scenario 10 |
+| 15 | (After the first release.) Windows parity: proxy settings, named-pipe brokers, toasts, ETW, WFP audit, `ReadDirectoryChangesW`, pause | All 12 scenarios on Windows |
+| 16 | **v1.0** release (first release, Linux and Kiro): signed deb/rpm, AppArmor guidance, threat model, published escape corpus. MSI after the first release | Install → protected Kiro session in <5 min on Ubuntu 24.04 |
 
-**Estimate (one engineer):** v0.1 week 1; Linux v0.5 about week 8; v1.0 with Windows about week 15.
+**Estimate:** not redone for the Linux-only first release (2026-11-21). The earlier estimate (v0.1 week 1, Linux v0.5 about week 8, v1.0 with Windows about week 15) no longer applies.

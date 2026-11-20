@@ -13,7 +13,7 @@ Pumpkin-Shell/
 │   ├── pks-proxy/          # egress proxy + relay
 │   ├── pks-registry/       # npm/PyPI mirror, cooldown, OSV, typosquat
 │   ├── pks-detect/         # detection engine, watcher, notifications
-│   └── pks-ide/            # Code-OSS adapter + IDE profiles (data files)
+│   └── pks-ide/            # Code-OSS adapter + IDE profiles (after first release; not in first release)
 ├── profiles/               # IDE profile TOML (paths, exact domains, env keys)
 ├── tests/fixtures/         # one fixture per rule
 ├── docs/

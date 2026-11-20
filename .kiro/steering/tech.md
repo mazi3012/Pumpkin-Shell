@@ -6,7 +6,7 @@
 - Crypto: `ed25519-dalek` + `sha2`. Never hand-roll crypto.
 - File watching: `notify`. Typosquat distance: `strsim`.
 - Linux sandbox: `bwrap` binary + `landlock` crate + seccomp (`seccompiler` or libseccomp bindings). No root at runtime.
-- Windows sandbox: `windows` crate (windows-rs): separate local user, WFP, Job Objects, ETW, signed service.
+- Windows sandbox (after the first release): `windows` crate (windows-rs): separate local user, WFP, Job Objects, ETW, signed service.
 - Platform code lives behind the `SandboxBackend` trait with `#[cfg(target_os = ...)]` modules. Shared logic must stay platform-neutral.
 
 ## Versions: always latest stable, verified online (user rule, critical)

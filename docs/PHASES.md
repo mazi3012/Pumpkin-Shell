@@ -15,21 +15,21 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 3 | `doctor` (Linux) | T1 | Linux | | done (PR #2 merged) |
 | 4 | `scan` | T4 | Both | **v0.1** | done (PR #5 merged, CI green on both runners; step 4.12 tag v0.1 pending) |
 | 5 | Linux PoC: Kiro in bwrap | T2 | Linux | | done (PR #6 merged, CI green; accepted with a VS Code stand-in, real Kiro test is PRD scenario 2) |
-| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | blocked: Q5 (Windows machine) |
+| 6 | Windows PoC: Kiro as `pks-sandbox` | T3 | Windows | | deferred: after first release |
 | 7 | Policy and signed log | T5 | Both | | done (PR #7 merged, CI green on both runners) |
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | in-progress (branch `phase-10-workspace-integrity`) |
 | 11 | Notifications and review | T9 | Linux | | todo |
 | 12 | Brokers | T10 | Linux | | todo |
-| 13 | Code-OSS adapter, four IDEs | T11 | Linux | **Linux v0.5** | todo |
-| 14 | npm and PyPI mirror | T12 | Both | | todo |
+| 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
+| 14 | npm and PyPI mirror | T12 | Linux | | todo |
 | 15 | Linux exec/connect auditing | T13 | Linux | | todo |
-| 16 | Windows enforcement | T14 | Windows | | todo |
-| 17 | Windows parity | T15 | Windows | | todo |
-| 18 | v1.0 release | T16 | Both | **v1.0** | todo |
+| 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
+| 17 | Windows parity | T15 | Windows | | deferred: after first release |
+| 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | todo |
 
-Phase 6 is out of number order on purpose. The PRD runs both proofs of concept early so the design can change before anything depends on it. If no Windows machine is available, skip Phase 6 and continue with Phase 7. It must be done before Phase 16.
+**First-release scope (set 2026-11-21, see DECISIONS.md):** Linux and Kiro only. Phases 6, 13, 16 and 17 are deferred until after the first release. Phase 6 keeps its number, and it is out of order on purpose. The PRD runs the Windows proof of concept early, so the design can change before anything depends on it. Nothing in the first release waits on Phase 6.
 
 Status values: `todo`, `in-progress`, `in-review (PR #<n>)`, `done`, `blocked: <reason>`. Update this table when a phase changes state.
 
@@ -152,7 +152,7 @@ Steps: 5.1 [x], 5.2 [x] (Xephyr; GPU and `/dev/shm` not needed, fonts from `/usr
 
 ---
 
-## Phase 6: Windows PoC: Kiro as `pks-sandbox`
+## Phase 6: Windows PoC: Kiro as `pks-sandbox` (deferred: after first release)
 
 **Goal:** prove the Windows design (separate user, WFP, Job Object) before building on it.
 
@@ -293,7 +293,7 @@ Status of that line (2026-11-21):
 
 ---
 
-## Phase 13: Code-OSS adapter and four IDEs → Linux v0.5
+## Phase 13: Code-OSS adapter, VS Code, Cursor, Windsurf (deferred: after first release)
 
 **Goal:** one adapter that covers Kiro, VS Code, Cursor and Windsurf. Adds crate `pks-ide` and `profiles/`.
 
@@ -338,7 +338,7 @@ Status of that line (2026-11-21):
 
 ---
 
-## Phase 16: Windows enforcement
+## Phase 16: Windows enforcement (deferred: after first release)
 
 **Goal:** `pumpkin-shell ide kiro .` on Windows, using what Phase 6 learned.
 
@@ -355,7 +355,7 @@ Status of that line (2026-11-21):
 
 ---
 
-## Phase 17: Windows parity
+## Phase 17: Windows parity (deferred: after first release)
 
 **Goal:** every Linux feature also works on Windows.
 
@@ -370,19 +370,19 @@ Status of that line (2026-11-21):
 
 ---
 
-## Phase 18: v1.0 release
+## Phase 18: v1.0 release (first release: Linux, Kiro)
 
-**Goal:** a signed, installable product with honest public claims.
+**Goal:** a signed, installable Linux product with Kiro, with honest public claims.
 
-18.1. Signed deb and rpm (cosign + SLSA provenance); signed MSI and service (Authenticode).
+18.1. Signed deb and rpm (cosign + SLSA provenance). Signed MSI and service (Authenticode) come after the first release.
 18.2. AppArmor profile and guidance for Ubuntu 24.04+.
 18.3. Public threat model and known-risks page (PRD §11).
 18.4. Published escape corpus with "N/N pass on corpus vX" results.
 18.5. `cargo vet` added to CI.
 
 **Done when:**
-- Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04 and Windows 11.
-- 100% of the escape corpus passes on both OSes.
+- Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04.
+- 100% of the escape corpus passes on Linux.
 
 ---
 
@@ -390,7 +390,7 @@ Status of that line (2026-11-21):
 
 - Each phase is built on its own branch, fully tested, and delivered as exactly one PR. The user reviews it. **Never merge a PR without the user's explicit permission for that PR.** Full rules: "One phase, one PR" in `.kiro/steering/organization.md`.
 - A phase becomes `done` only after the user merges its PR. While waiting, its status is `in-review (PR #<n>)`.
-- Start a phase only when the previous phase (in number order) is `done`, except Phase 6 as noted above.
+- Start a phase only when the previous phase (in number order) is `done`, except the deferred phases (6, 13, 16, 17), which are skipped until after the first release.
 - Before a phase starts, check its **Blocked by** line and resolve or ask about each open question.
 - Every phase ends with tests and a runnable demo (`tech.md`).
 - When a phase finishes: set its status to `done`, record decisions in `DECISIONS.md`, and save an LTM checkpoint: `python3 ltm/bin/ltm.py checkpoint --summary "Phase N done: <name>"`.
