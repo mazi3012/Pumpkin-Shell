@@ -188,6 +188,7 @@ impl Layout {
             display_size: (800, 600),
             proxy_socket: self.proxy.clone(),
             host_ports: self.host_ports.clone(),
+            binds: Vec::new(),
         }
     }
 }
@@ -250,6 +251,123 @@ fn a_mass_delete_inside_the_sandbox_is_found_and_restored() -> TestResult {
     pks_core::snapshot::restore_into(session.path(), &target)?;
     assert_eq!(fs::read_to_string(target.join("src/file7.rs"))?, "// 7\n");
     assert_eq!(fs::read_to_string(target.join("README.md"))?, "keep\n");
+    Ok(())
+}
+
+/// Protected paths are staged: a write inside the sandbox works there and
+/// lands in the session's staging area, never in the repo. The protected
+/// paths and their parents cannot be renamed (PRD FR-WS).
+#[test]
+fn protected_paths_are_staged_and_cannot_be_renamed() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".git/hooks"))?;
+    fs::write(repo.join(".git/hooks/pre-commit.sample"), "#!/bin/sh\n")?;
+    fs::write(repo.join(".git/config"), "[core]\n\tbare = false\n")?;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    fs::create_dir_all(repo.join("src"))?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+
+    let script = r##"out=/workspace/src/results.txt
+: > "$out"
+ok() { name=$1; shift; if "$@" >/dev/null 2>&1; then echo "PASS $name" >> "$out"; else echo "FAIL $name" >> "$out"; fi; }
+no() { name=$1; shift; if "$@" >/dev/null 2>&1; then echo "FAIL $name" >> "$out"; else echo "PASS $name" >> "$out"; fi; }
+# In-session, a write to a protected path works and is readable.
+ok "overwrite .vscode/settings.json" sh -c 'echo "{\"chat.tools.autoApprove\": true}" > /workspace/.vscode/settings.json'
+ok "read it back" grep -q autoApprove /workspace/.vscode/settings.json
+ok "add a git hook" sh -c 'echo "#!/bin/sh" > /workspace/.git/hooks/post-commit'
+ok "add a new Kiro hook" sh -c 'mkdir -p /workspace/.kiro/hooks && echo "{}" > /workspace/.kiro/hooks/test-on-save.json'
+ok "add .envrc" sh -c 'echo "export X=1" > /workspace/.envrc'
+ok "ordinary files are still writable" sh -c 'echo ok > /workspace/src/ok.txt'
+# The protected paths and their parents cannot be moved or removed.
+no "rename .git" mv /workspace/.git /workspace/.git2
+no "rename .kiro" mv /workspace/.kiro /workspace/.kiro2
+no "rename .vscode" mv /workspace/.vscode /workspace/.vscode2
+no "rename .git/hooks" mv /workspace/.git/hooks /workspace/.git/hooks2
+no "replace .envrc by rename" sh -c 'echo x > /workspace/.envrc.tmp && mv /workspace/.envrc.tmp /workspace/.envrc'
+grep -q '^FAIL' "$out" && exit 1
+exit 0
+"##;
+    let mut spec = layout.spec_running(script);
+    spec.binds = staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect();
+    let status = backend()?.run(&spec)?;
+    let text = fs::read_to_string(repo.join("src/results.txt")).unwrap_or_default();
+    assert!(
+        status.success() && !text.contains("FAIL"),
+        "exit {status}; results:\n{text}"
+    );
+    assert_eq!(text.lines().count(), 11, "{text}");
+
+    // The repo was not written.
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    assert!(!repo.join(".git/hooks/post-commit").exists());
+    assert!(!repo.join(".kiro/hooks/test-on-save.json").exists());
+    assert!(!repo.join(".envrc").exists() || fs::read_to_string(repo.join(".envrc"))?.is_empty());
+    assert_eq!(fs::read_to_string(repo.join("src/ok.txt"))?, "ok\n");
+    // The writes are in staging, and each protected path is reported.
+    let staged = session.path().join("staging");
+    assert!(fs::read_to_string(staged.join(".vscode/settings.json"))?.contains("autoApprove"));
+    assert!(staged.join(".git/hooks/post-commit").is_file());
+    assert!(staged.join(".kiro/hooks/test-on-save.json").is_file());
+    let findings = staging.finish();
+    let targets: Vec<&str> = findings.iter().map(|f| f.target.as_str()).collect();
+    assert_eq!(targets, [".envrc", ".git/hooks", ".kiro/hooks", ".vscode"]);
+    // The empty mount points are gone.
+    assert!(!repo.join(".kiro").exists());
+    assert!(!repo.join(".envrc").exists());
+    Ok(())
+}
+
+/// `rm -rf` of a protected path empties its staged copy and then fails on the
+/// mount point. The real files in the repo are not touched.
+#[test]
+fn deleting_a_protected_path_never_touches_the_repo() -> TestResult {
+    let layout = Layout::new()?;
+    let repo = &layout.repo;
+    fs::create_dir_all(repo.join(".vscode"))?;
+    fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+    fs::create_dir_all(repo.join(".git/hooks"))?;
+    fs::write(repo.join(".git/hooks/pre-commit"), "#!/bin/sh\n")?;
+    fs::write(repo.join(".git/config"), "[core]\n")?;
+    let session = tempfile::tempdir()?;
+    let staging = pks_core::workspace::prepare(repo, session.path())?;
+    let script = "rm -rf /workspace/.vscode /workspace/.git /workspace/.kiro; exit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.binds = staging
+        .mounts()
+        .iter()
+        .map(|mount| pks_sandbox::Bind {
+            rel: mount.rel.clone(),
+            source: mount.source.clone(),
+        })
+        .collect();
+    assert!(backend()?.run(&spec)?.success());
+    assert_eq!(
+        fs::read_to_string(repo.join(".vscode/settings.json"))?,
+        "{}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.join(".git/hooks/pre-commit"))?,
+        "#!/bin/sh\n"
+    );
+    assert_eq!(fs::read_to_string(repo.join(".git/config"))?, "[core]\n");
+    // What the sandbox removed is reported, from the staged copies.
+    let findings = staging.finish();
+    let targets: Vec<&str> = findings.iter().map(|f| f.target.as_str()).collect();
+    assert!(targets.contains(&".vscode"), "{targets:?}");
+    assert!(targets.contains(&".git/hooks"), "{targets:?}");
     Ok(())
 }
 

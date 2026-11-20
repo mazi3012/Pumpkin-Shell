@@ -10,6 +10,7 @@ pub mod paths;
 pub mod policy;
 pub mod snapshot;
 pub mod trust;
+pub mod workspace;
 
 mod fsutil;
 mod hex;

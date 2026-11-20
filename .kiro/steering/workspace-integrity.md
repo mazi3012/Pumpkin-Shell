@@ -69,9 +69,7 @@ Fake credentials placed in sandboxed home to detect exfiltration:
 - **Watched**: Files that influence behavior but don't execute directly
 
 ## Review Flow
-
-1. Write to protected path → staged, alert raised
-2. `pumpkin-shell review` shows staged writes
-3. User approves or rejects
-4. If approved, file moved to real location
-5. If rejected, file stays in staging (deleted at session end)
+1. Write to a protected path -> goes to the staged copy, `WS-PROTECTED-WRITE` is raised at session end
+2. The staged copy is kept in `<data>/sessions/<sid>/staging/`
+3. `pumpkin-shell review` (Phase 11) will show staged writes and let the user approve or reject; until then the user copies what they accept by hand
+4. The repo itself is never written by the sandbox for these paths

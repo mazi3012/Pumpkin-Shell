@@ -46,7 +46,7 @@ pub enum SnapshotError {
 /// Makes a git command that cannot read any config but the snapshot's own.
 /// The config file it points to is empty, and the author is fixed, so a
 /// commit needs no user identity.
-fn git(session_dir: &Path) -> Result<Command, SnapshotError> {
+pub(crate) fn git(session_dir: &Path) -> Result<Command, SnapshotError> {
     let empty = session_dir.join("empty.gitconfig");
     fs::write(&empty, b"").map_err(|source| SnapshotError::Io {
         context: format!("cannot write {}", empty.display()),
