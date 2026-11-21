@@ -21,7 +21,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | done (PR #10 merged) |
 | 11 | Notifications and review | T9 | Linux | | done (PR #11 merged; done-when checked with VS Code 2026-11-21, Kiro run pending; 11.4 deferred, DECISIONS Q7) |
-| 12 | Brokers | T10 | Linux | | in-progress (branch `phase-12-brokers`) |
+| 12 | Brokers | T10 | Linux | | in-progress (branch `phase-12-brokers`; PR to be opened; Kiro sign-in and git push checked by hand 2026-11-21) |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | todo |
 | 15 | Linux exec/connect auditing | T13 | Linux | | todo |
@@ -286,14 +286,16 @@ Status (2026-11-21): 11.1, 11.2, 11.3, 11.5, 11.6 (staged writes), 11.7 done wit
 ---
 
 ## Phase 12: Brokers
-
 **Goal:** the host-side actions the sandbox may request but not perform.
-
-12.1. URL-open broker: the sandbox's `xdg-open` forwards to the host browser.
-12.2. OAuth callback relay back to the sandboxed IDE on loopback. Observed in Phase 5: Kiro IDE signs in with `redirect_uri=http://localhost:3128` and listens on `127.0.0.1:3128` inside the sandbox, so the host browser cannot reach it without a relay (`docs/poc/linux-kiro.md`).
-12.3. `git push` approval: prompt shows remote and branch.
-
+12.1. URL-open broker: the sandbox's `xdg-open` forwards to the host browser. Built: the host asks in a desktop popup (Open, Copy link, or Deny).
+12.2. OAuth callback relay back to the sandboxed IDE on loopback. Built: host port 127.0.0.1:3128 is passed to the IDE's listener on the same port. Kiro sign-in checked by hand on 2026-11-21.
+12.3. `git push` approval: prompt shows remote and branch. Built: desktop popup with Push or Deny. A forced push or other refused form raises a blocked warning.
+Extra, not in the original list: clipboard copy out and paste in, each after a desktop popup; decisions written to the session log (rule, origin or remote and branch, verdict; never a full URL or copied text). Recorded in DECISIONS.
 **Done when:** PRD scenarios 2 (Kiro sign-in) and 12 (`git push` prompt) pass.
+- [x] Scenario 2 (Kiro sign-in): checked by hand 2026-11-21, with a real Kiro login.
+- [x] Scenario 12 (`git push` prompt): checked by hand 2026-11-21 in the Kiro terminal: `git push origin main` gave a Push popup and pushed; `git push --force origin main` was blocked with a warning popup.
+
+**Not verified yet:** the Windows CI job (the code is Linux-only in this phase).
 
 ---
 

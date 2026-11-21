@@ -26,8 +26,22 @@ use crate::ask;
 const REPEAT_WINDOW: Duration = Duration::from_secs(60);
 
 /// Performs brokered actions for one repo.
+/// Writes one log entry: rule, target and verdict. Never the page's full URL
+/// or any text the sandbox sent beyond these fields.
+pub type Record = std::sync::Arc<dyn Fn(&str, &str, &str) + Send + Sync>;
+
+/// The scheme and host of a URL, without its path or query, which can carry
+/// login state. `https://app.example/x?code=1` becomes `https://app.example`.
+fn origin_of(url: &str) -> String {
+    let (scheme, rest) = url.split_once("://").unwrap_or(("", url));
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    format!("{scheme}://{host}")
+}
+
 pub struct Host {
     repo: PathBuf,
+    /// Writes decisions to the session log.
+    record: Record,
     /// The host desktop the popups are shown on. `None` shows nothing and
     /// refuses every request.
     desktop: Option<std::ffi::OsString>,
@@ -39,9 +53,10 @@ pub struct Host {
 
 impl Host {
     #[must_use]
-    pub fn new(repo: &Path) -> Self {
+    pub fn new(repo: &Path, record: Record) -> Self {
         Self {
             repo: repo.to_path_buf(),
+            record,
             desktop: std::env::var_os("DISPLAY"),
             answered: Mutex::new(HashMap::new()),
             clipboard: Command::new("xclip")
@@ -56,7 +71,8 @@ impl Host {
     fn without_desktop(repo: &Path) -> Self {
         Self {
             desktop: None,
-            ..Self::new(repo)
+            record: std::sync::Arc::new(|_, _, _| {}),
+            ..Self::new(repo, std::sync::Arc::new(|_, _, _| {}))
         }
     }
 
@@ -155,6 +171,18 @@ impl Handler for Host {
             }
         };
         self.remember(&key);
+        let verdict = match decision {
+            Decision::Allow => "allow",
+            Decision::CopyOnly => "copy",
+            Decision::Deny => "deny",
+        };
+        match request {
+            Request::Open { url } => (self.record)("BROKER-OPEN", &origin_of(url), verdict),
+            Request::Push { remote, branch } => {
+                (self.record)("BROKER-PUSH", &format!("{remote} {branch}"), verdict)
+            }
+            Request::Refused { .. } => {}
+        }
         decision
     }
 
@@ -163,6 +191,7 @@ impl Handler for Host {
     }
 
     fn warn(&self, message: &str) {
+        (self.record)("BROKER-REFUSED", "git push", "blocked");
         eprintln!("broker: {message}");
         ask::notice(
             self.desktop.clone(),
@@ -208,6 +237,53 @@ impl Handler for Host {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn quiet() -> Record {
+        std::sync::Arc::new(|_, _, _| {})
+    }
+
+    #[test]
+    fn a_link_is_logged_by_its_origin_only() {
+        assert_eq!(
+            origin_of("https://app.kiro.dev/signin?state=abc&code=secret#frag"),
+            "https://app.kiro.dev"
+        );
+        assert_eq!(
+            origin_of("http://localhost:3128/callback?code=x"),
+            "http://localhost:3128"
+        );
+    }
+
+    #[test]
+    fn a_refused_open_is_logged_as_deny_with_the_origin() {
+        let entries = std::sync::Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = std::sync::Arc::clone(&entries);
+        let record: Record = std::sync::Arc::new(move |rule, target, verdict| {
+            if let Ok(mut list) = sink.lock() {
+                list.push(format!("{rule} {target} {verdict}"));
+            }
+        });
+        let host = Host {
+            record,
+            ..Host::without_desktop(Path::new("/nonexistent"))
+        };
+        let url = "https://app.kiro.dev/signin?code=secret";
+        assert_eq!(
+            host.approve(&Request::Open {
+                url: url.to_owned()
+            }),
+            Decision::Deny
+        );
+        let logged = entries.lock().map(|list| list.clone()).unwrap_or_default();
+        assert_eq!(
+            logged,
+            vec!["BROKER-OPEN https://app.kiro.dev deny".to_owned()]
+        );
+        assert!(
+            !logged.join("").contains("secret"),
+            "the query leaked into the log"
+        );
+    }
 
     /// Runs git with a fixed identity, so commits work on any machine.
     fn git(dir: &Path, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
@@ -275,7 +351,7 @@ mod tests {
             &["remote", "add", "origin", remote.to_str().ok_or("path")?],
         )?;
 
-        let host = Host::new(&repo);
+        let host = Host::new(&repo, quiet());
         host.push("origin", "main")
             .map_err(|e| format!("push failed: {e}"))?;
 
@@ -298,7 +374,7 @@ mod tests {
         std::fs::write(repo.join("README.md"), "hello\n")?;
         git(&repo, &["add", "README.md"])?;
         git(&repo, &["commit", "-q", "-m", "first"])?;
-        let error = Host::new(&repo).push("nowhere", "main");
+        let error = Host::new(&repo, quiet()).push("nowhere", "main");
         assert!(error.is_err_and(|message| message.starts_with("git push failed")));
         Ok(())
     }

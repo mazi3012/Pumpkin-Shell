@@ -327,13 +327,34 @@ impl Session {
         // The brokers (Phase 12). Requests from the sandbox arrive on a socket
         // in the broker directory, which is the only host path shared with it.
         let broker_stop = Arc::new(AtomicBool::new(false));
+        // Broker decisions go to the session log, with this session's policy hash.
+        let broker_record: crate::broker::Record = {
+            let log = Arc::clone(&log);
+            let policy_hash = effective.hash();
+            Arc::new(move |rule: &str, target: &str, verdict: &str| {
+                if let Ok(mut guard) = log.lock()
+                    && let Some(logger) = guard.as_mut()
+                {
+                    let _ = logger.append(
+                        &Record {
+                            policy_hash: &policy_hash,
+                            layer: "broker",
+                            target,
+                            rule,
+                            verdict,
+                        },
+                        now_ms(),
+                    );
+                }
+            })
+        };
         let broker_dir = dir.join("broker");
         create_private_dir(&broker_dir)
             .map_err(|e| format!("cannot create {}: {e}", broker_dir.display()))?;
         let request_listener = UnixListener::bind(broker_dir.join("request.sock"))
             .map_err(|e| format!("cannot open the broker socket: {e}"))?;
         let broker_host: Arc<dyn pks_sandbox::linux::broker::Handler + Send + Sync> =
-            Arc::new(crate::broker::Host::new(repo));
+            Arc::new(crate::broker::Host::new(repo, broker_record));
         let request_stop = Arc::clone(&broker_stop);
         std::thread::spawn(move || {
             let _ = pks_sandbox::linux::broker::serve(request_listener, broker_host, request_stop);
