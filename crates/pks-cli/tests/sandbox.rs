@@ -1122,3 +1122,171 @@ fn pip_installs_a_real_package_through_the_mirror() -> TestResult {
     assert!(status.success(), "exit {status}; pip log:\n{log}");
     Ok(())
 }
+
+/// Runs `script` in the sandbox with the package mirror on, and stops the
+/// mirror afterwards. Needs internet access to the registries.
+fn run_through_mirror(
+    layout: &Layout,
+    script: &str,
+) -> Result<std::process::ExitStatus, Box<dyn std::error::Error>> {
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    Ok(status?)
+}
+
+/// Asserts the sandbox run succeeded, printing the client log if not.
+fn assert_client_ok(
+    layout: &Layout,
+    status: std::process::ExitStatus,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = fs::read_to_string(layout.repo.join("client.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; client log:\n{log}");
+    Ok(())
+}
+
+/// PRD FR-REG, clients: pnpm 12.21.0 is installed through the mirror and
+/// then installs a real package. Needs internet access to registry.npmjs.org.
+#[test]
+fn pnpm_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install pnpm@12.21.0 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+/home/sandbox/tools/node_modules/.bin/pnpm --version > /workspace/version.txt || exit 5
+/home/sandbox/tools/node_modules/.bin/pnpm config get registry > /workspace/registry.txt || exit 6
+/home/sandbox/tools/node_modules/.bin/pnpm add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 7
+test -f node_modules/left-pad/package.json || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "12.21.0"
+    );
+    let registry = fs::read_to_string(layout.repo.join("registry.txt"))?;
+    assert!(
+        registry.contains("127.0.0.1:3130"),
+        "pnpm does not use the mirror: {registry}"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: yarn 1.22.22 (the npm `latest` tag of `yarn`) is
+/// installed through the mirror and then installs a real package.
+#[test]
+fn yarn_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install yarn@1.22.22 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+/home/sandbox/tools/node_modules/.bin/yarn --version > /workspace/version.txt || exit 5
+/home/sandbox/tools/node_modules/.bin/yarn add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 6
+test -f node_modules/left-pad/package.json || exit 7
+exit 0
+"#;
+    let status = run_through_mirror(&layout, script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "1.22.22"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: bun 1.4.4 is installed through the mirror and then
+/// installs a real package. The `bun` npm package fetches its binary in a
+/// postinstall script, which the sandbox keeps off, so the platform package
+/// that ships the binary is installed instead. Needs internet access to
+/// registry.npmjs.org.
+#[test]
+fn bun_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install @oven/bun-linux-x64@1.4.4 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+BUN=/home/sandbox/tools/node_modules/@oven/bun-linux-x64/bin/bun
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+$BUN --version > /workspace/version.txt || exit 5
+$BUN add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 6
+test -f node_modules/left-pad/package.json || exit 7
+exit 0
+"#;
+    let status = run_through_mirror(&layout, script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "1.4.4"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: poetry 2.5.1 is installed through the mirror. Its
+/// PyPI source is replaced by the mirror as a primary source, so it resolves
+/// `requests` through the mirror only. Needs internet access to pypi.org.
+#[test]
+fn poetry_resolves_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && python3 -m venv /home/sandbox/tools/poetry-venv || exit 2
+/home/sandbox/tools/poetry-venv/bin/pip install poetry==2.5.1 > /workspace/client.log 2>&1 || exit 3
+/home/sandbox/tools/poetry-venv/bin/poetry --version > /workspace/version.txt || exit 4
+mkdir -p /workspace/app && cd /workspace/app || exit 5
+printf '[project]\nname = "app"\nversion = "0.1.0"\nrequires-python = ">=3.10"\ndependencies = []\n' > pyproject.toml
+/home/sandbox/tools/poetry-venv/bin/poetry source add --priority=primary mirror http://127.0.0.1:3130/pypi/simple/ >> /workspace/client.log 2>&1 || exit 6
+/home/sandbox/tools/poetry-venv/bin/poetry add requests==2.34.2 --no-interaction >> /workspace/client.log 2>&1 || exit 7
+grep -q 'version = "2.34.2"' poetry.lock || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, script)?;
+    assert_client_ok(&layout, status)?;
+    let version = fs::read_to_string(layout.repo.join("version.txt"))?;
+    assert!(version.contains("2.5.1"), "{version}");
+    Ok(())
+}
+
+/// PRD FR-REG, clients: uv 0.13.9 is installed through the mirror and then
+/// installs a real package with `UV_DEFAULT_INDEX` pointing at the mirror.
+/// Needs internet access to pypi.org.
+#[test]
+fn uv_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && python3 -m venv /home/sandbox/tools/uv-venv || exit 2
+/home/sandbox/tools/uv-venv/bin/pip install uv==0.13.9 > /workspace/client.log 2>&1 || exit 3
+/home/sandbox/tools/uv-venv/bin/uv --version > /workspace/version.txt || exit 4
+mkdir -p /workspace/app && cd /workspace/app || exit 5
+/home/sandbox/tools/uv-venv/bin/uv venv .venv >> /workspace/client.log 2>&1 || exit 6
+/home/sandbox/tools/uv-venv/bin/uv pip install --python .venv/bin/python requests==2.34.2 >> /workspace/client.log 2>&1 || exit 7
+test -d .venv/lib/python3.12/site-packages/requests || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, script)?;
+    assert_client_ok(&layout, status)?;
+    let version = fs::read_to_string(layout.repo.join("version.txt"))?;
+    assert!(version.starts_with("uv 0.13.9"), "{version}");
+    Ok(())
+}
