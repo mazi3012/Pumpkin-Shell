@@ -41,12 +41,22 @@ pub(crate) fn choose(
             "--timeout",
             TIMEOUT_SECONDS,
         ])
-        .env("DISPLAY", display)
+        .env("DISPLAY", display.clone())
         .stdin(Stdio::null())
         .stderr(Stdio::null());
     for option in options {
         command.arg(option);
     }
+    // A short notice on the desktop too, so a popup that opens behind another
+    // window is still noticed. Best effort: a missing notify-send is ignored.
+    let _ = Command::new("notify-send")
+        .arg("--app-name=Pumpkin-Shell")
+        .arg(clean(title, 120))
+        .arg("Answer the window that just opened on your desktop.")
+        .env("DISPLAY", &display)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
     let output = command.output().ok()?;
     if !output.status.success() {
         return None;
