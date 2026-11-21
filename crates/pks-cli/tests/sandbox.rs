@@ -872,6 +872,11 @@ impl pks_sandbox::linux::broker::Handler for Recorder {
             .push(format!("push {remote} {branch}"));
         Ok(())
     }
+    fn warn(&self, message: &str) {
+        if let Ok(mut calls) = self.calls.lock() {
+            calls.push(format!("warn {message}"));
+        }
+    }
 }
 
 /// PRD scenario 12 and Phase 12.1 and 12.3, from inside the sandbox: `xdg-open`
@@ -907,7 +912,8 @@ exit 0\n";
         calls,
         vec![
             "open https://accounts.example.com/oauth".to_owned(),
-            "push origin main".to_owned()
+            "push origin main".to_owned(),
+            "warn blocked: a forced push is not allowed through the broker".to_owned()
         ],
         "the host was asked for exactly these actions"
     );

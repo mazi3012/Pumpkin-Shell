@@ -19,6 +19,8 @@ use std::time::Duration;
 const MAX_LINE: u64 = 4096;
 /// Longest URL accepted.
 const MAX_URL: usize = 2048;
+/// Longest refusal message accepted.
+const MAX_MESSAGE: usize = 300;
 
 /// A validated request from the sandbox.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,6 +29,9 @@ pub enum Request {
     Open { url: String },
     /// Push `branch` to `remote` from the repo, on the host.
     Push { remote: String, branch: String },
+    /// The sandbox refused a command it was asked to run (for example a
+    /// forced push). The host shows a warning; nothing is performed.
+    Refused { message: String },
 }
 
 /// The user's answer to a request.
@@ -48,6 +53,8 @@ pub trait Handler {
     fn approve(&self, request: &Request) -> Decision;
     /// Copies the URL to the host's clipboard.
     fn copy_url(&self, url: &str) -> Result<(), String>;
+    /// Shows a warning about a refused request.
+    fn warn(&self, message: &str);
     /// Opens the URL in the host's browser.
     fn open_url(&self, url: &str) -> Result<(), String>;
     /// Pushes the branch to the remote in the repo.
@@ -83,6 +90,18 @@ pub fn parse(line: &str) -> Result<Request, String> {
             Ok(Request::Push {
                 remote: remote.to_owned(),
                 branch: branch.to_owned(),
+            })
+        }
+        Some("refuse") => {
+            let message = line.strip_prefix("refuse\t").unwrap_or("");
+            if message.is_empty() || message.len() > MAX_MESSAGE {
+                return Err("the refusal message is empty or too long".to_owned());
+            }
+            if !message.bytes().all(|b| b.is_ascii_graphic() || b == b' ') {
+                return Err("the refusal message has control characters".to_owned());
+            }
+            Ok(Request::Refused {
+                message: message.to_owned(),
             })
         }
         Some(other) => Err(format!("unknown request {other:?}")),
@@ -136,6 +155,10 @@ pub fn respond(line: &str, handler: &dyn Handler) -> String {
         Ok(request) => request,
         Err(reason) => return format!("error\t{reason}"),
     };
+    if let Request::Refused { message } = &request {
+        handler.warn(message);
+        return "denied\tblocked".to_owned();
+    }
     let (result, done) = match (handler.approve(&request), &request) {
         (Decision::Deny, _) | (Decision::CopyOnly, Request::Push { .. }) => {
             return "denied\tthe user did not approve it".to_owned();
@@ -145,6 +168,7 @@ pub fn respond(line: &str, handler: &dyn Handler) -> String {
         (Decision::Allow, Request::Push { remote, branch }) => {
             (handler.push(remote, branch), "done")
         }
+        (_, Request::Refused { .. }) => unreachable!("refusals are answered above"),
     };
     match result {
         Ok(()) => format!("ok\t{done}"),
@@ -303,6 +327,9 @@ mod tests {
             self.calls.borrow_mut().push(format!("copy {url}"));
             Ok(())
         }
+        fn warn(&self, message: &str) {
+            self.calls.borrow_mut().push(format!("warn {message}"));
+        }
         fn open_url(&self, url: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("open {url}"));
             Ok(())
@@ -427,6 +454,7 @@ mod tests {
         fn copy_url(&self, _: &str) -> Result<(), String> {
             Ok(())
         }
+        fn warn(&self, _: &str) {}
         fn open_url(&self, _: &str) -> Result<(), String> {
             Ok(())
         }

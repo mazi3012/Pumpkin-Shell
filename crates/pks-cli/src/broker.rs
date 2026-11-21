@@ -99,9 +99,13 @@ fn copy_to_clipboard(text: &str) -> Result<(), String> {
 
 impl Handler for Host {
     fn approve(&self, request: &Request) -> Decision {
+        if let Request::Refused { .. } = request {
+            return Decision::Deny;
+        }
         let key = match request {
             Request::Open { url } => format!("open {url}"),
             Request::Push { remote, branch } => format!("push {remote} {branch}"),
+            Request::Refused { .. } => unreachable!("refusals are not approved"),
         };
         if self.answered_recently(&key) {
             eprintln!("broker: the same request was just answered; not asking again.");
@@ -131,6 +135,7 @@ impl Handler for Host {
                     _ => Decision::Deny,
                 }
             }
+            Request::Refused { .. } => Decision::Deny,
             Request::Push { remote, branch } => {
                 let text = format!(
                     "Kiro wants to push branch {branch} to remote {remote} of:\n{}",
@@ -155,6 +160,16 @@ impl Handler for Host {
 
     fn copy_url(&self, url: &str) -> Result<(), String> {
         copy_to_clipboard(url)
+    }
+
+    fn warn(&self, message: &str) {
+        eprintln!("broker: {message}");
+        ask::choose(
+            self.desktop.clone(),
+            "Pumpkin-Shell: blocked",
+            &format!("Kiro tried a command that is blocked:\n\n{message}"),
+            &["OK"],
+        );
     }
 
     fn open_url(&self, url: &str) -> Result<(), String> {

@@ -63,7 +63,20 @@ fn git(args: &[String]) -> ExitCode {
     }
     let fields = &args[1..];
     if fields.len() != 2 || fields.iter().any(|arg| arg.starts_with('-')) {
-        eprintln!("git: push takes a remote and a branch and no options: git push REMOTE BRANCH");
+        let forced = fields
+            .iter()
+            .any(|arg| arg == "-f" || arg.starts_with("--force"));
+        let message = if forced {
+            "blocked: a forced push is not allowed through the broker"
+        } else {
+            "blocked: push takes a remote and a branch and no options: git push REMOTE BRANCH"
+        };
+        // The host shows a warning on the desktop; the terminal gets the same text.
+        let _ = broker::request(
+            std::path::Path::new(BROKER_REQUEST_IN),
+            &format!("refuse\t{message}"),
+        );
+        eprintln!("git: {message}");
         return ExitCode::from(EXIT_REFUSED);
     }
     send(&format!("push\t{}\t{}", fields[0], fields[1]))
