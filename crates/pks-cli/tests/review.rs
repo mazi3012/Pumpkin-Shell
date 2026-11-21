@@ -9,6 +9,16 @@ use std::process::{Command, Stdio};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
+/// The data folder pumpkin-shell uses under `home`. Keep in step with
+/// `pks_core::paths`: Linux uses XDG-style folders, Windows uses LOCALAPPDATA.
+fn data_dir(home: &Path) -> PathBuf {
+    if cfg!(windows) {
+        home.join("localappdata").join("Pumpkin-Shell")
+    } else {
+        home.join("data").join("pumpkin-shell")
+    }
+}
+
 const SESSION: &str = "sess-review-test";
 const SETTINGS: &str = ".vscode/settings.json";
 const CHANGED: &str = "{\"chat.tools.autoApprove\": true}\n";
@@ -20,8 +30,7 @@ fn session_with_staged_write() -> Result<(tempfile::TempDir, PathBuf), Box<dyn s
     let repo = home.path().join("repo");
     fs::create_dir_all(repo.join(".vscode"))?;
     fs::write(repo.join(SETTINGS), "{}\n")?;
-    let data = home.path().join("data").join("pumpkin-shell");
-    let session = data.join("sessions").join(SESSION);
+    let session = data_dir(home.path()).join("sessions").join(SESSION);
     fs::create_dir_all(&session)?;
     pks_core::snapshot::create(&repo, &session)?;
     fs::write(
@@ -40,6 +49,8 @@ fn cli(home: &Path, args: &[&str], stdin: &str) -> std::io::Result<std::process:
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("XDG_DATA_HOME", home.join("data"))
+        .env("APPDATA", home.join("appdata"))
+        .env("LOCALAPPDATA", home.join("localappdata"))
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -117,12 +128,7 @@ fn review_leaves_no_baseline_folder_behind() -> TestResult {
     let (home, _repo) = session_with_staged_write()?;
     let out = cli(home.path(), &["review", SESSION], "s\n")?;
     assert!(out.status.success());
-    let session = home
-        .path()
-        .join("data")
-        .join("pumpkin-shell")
-        .join("sessions")
-        .join(SESSION);
+    let session = data_dir(home.path()).join("sessions").join(SESSION);
     assert!(!session.join("review-baseline").exists());
     Ok(())
 }

@@ -2,9 +2,21 @@
 //! once, and the policy stays readable afterwards.
 
 use std::fs;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+/// The config and data folders pumpkin-shell uses under `home`. Keep in step
+/// with `pks_core::paths`: Linux uses XDG-style folders, Windows uses APPDATA
+/// and LOCALAPPDATA.
+fn config_dir(home: &Path) -> PathBuf {
+    if cfg!(windows) {
+        home.join("appdata").join("Pumpkin-Shell")
+    } else {
+        home.join("config").join("pumpkin-shell")
+    }
+}
 
 fn cli(home: &std::path::Path, args: &[&str]) -> std::io::Result<Output> {
     Command::new(env!("CARGO_BIN_EXE_pumpkin-shell"))
@@ -12,6 +24,10 @@ fn cli(home: &std::path::Path, args: &[&str]) -> std::io::Result<Output> {
         .env("HOME", home)
         .env("XDG_CONFIG_HOME", home.join("config"))
         .env("XDG_DATA_HOME", home.join("data"))
+        .env("APPDATA", home.join("appdata"))
+        .env("LOCALAPPDATA", home.join("localappdata"))
+        .env("APPDATA", home.join("appdata"))
+        .env("LOCALAPPDATA", home.join("localappdata"))
         .output()
 }
 
@@ -29,11 +45,7 @@ fn allow_adds_the_endpoint_once_and_the_policy_still_loads() -> TestResult {
     assert!(second.status.success());
     assert!(String::from_utf8_lossy(&second.stdout).contains("already in the policy"));
 
-    let policy = home
-        .path()
-        .join("config")
-        .join("pumpkin-shell")
-        .join("policy.toml");
+    let policy = config_dir(home.path()).join("policy.toml");
     let text = fs::read_to_string(&policy)?;
     assert_eq!(
         text.matches("api.example.com:443").count(),
@@ -59,13 +71,6 @@ fn allow_refuses_a_value_that_is_not_host_and_port() -> TestResult {
     let home = tempfile::tempdir()?;
     let out = cli(home.path(), &["allow", "not a host"])?;
     assert_eq!(out.status.code(), Some(2));
-    assert!(
-        !home
-            .path()
-            .join("config")
-            .join("pumpkin-shell")
-            .join("policy.toml")
-            .exists()
-    );
+    assert!(!config_dir(home.path()).join("policy.toml").exists());
     Ok(())
 }
