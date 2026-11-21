@@ -115,6 +115,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-21 | **The nested display does not exit when its last client leaves.** Xephyr was started with `-terminate`, which stops the server when the last client disconnects. The host's clipboard watcher connects briefly every second, so the display stopped before Kiro connected ("Missing X server"). The flag is removed. The display still stops when the session ends, because `NestedDisplay` kills it on drop. | Found while testing copy and paste in Phase 12. |
 
+| 2026-11-21 | **The nested display no longer grabs the host's keyboard and mouse (`-no-host-grab`).** By default Xephyr grabs both while its window has focus, so an approval popup on the desktop could not be clicked and the session looked frozen. Checked in `Xephyr -help` and its man page: the flag only turns off the grab. The sandbox still has no access to the host display. Popups were confirmed to run with `DISPLAY=:0` (the host) on 2026-11-21. | Found while testing the broker popups in Phase 12. |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |
