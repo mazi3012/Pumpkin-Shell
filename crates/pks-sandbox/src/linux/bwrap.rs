@@ -46,6 +46,8 @@ pub const MIRROR_LISTEN: &str = "127.0.0.1:3130";
 pub const MIRROR_URL: &str = "http://127.0.0.1:3130";
 /// Where the mirror's Unix socket appears inside the sandbox.
 pub const MIRROR_SOCKET_IN: &str = "/run/pks/mirror.sock";
+/// Socket timeout for pip and uv, in seconds (Phase 14).
+const MIRROR_TIMEOUT_SECS: &str = "120";
 /// Where the broker directory appears inside the sandbox (Phase 12).
 pub const BROKER_IN: &str = "/run/pks/broker";
 /// The request socket the wrappers send to. Created by the host.
@@ -241,27 +243,27 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
         push(&mut args, &["--setenv", name, value]);
     }
     if plan.mirror_socket.is_some() {
-        // npm and pip read these. Scripts of installed packages do not run by
-        // default (PRD FR-REG, install scripts).
-        push(
-            &mut args,
-            &[
-                "--setenv",
-                "npm_config_registry",
-                &format!("{MIRROR_URL}/npm/"),
-            ],
-        );
+        // npm, yarn, pnpm, pip and uv read these. pnpm ignores the npm
+        // variable, so it has its own. Scripts of installed packages do not
+        // run by default (PRD FR-REG, install scripts).
+        let npm = format!("{MIRROR_URL}/npm/");
+        let pypi = format!("{MIRROR_URL}/pypi/simple/");
+        push(&mut args, &["--setenv", "npm_config_registry", &npm]);
+        push(&mut args, &["--setenv", "PNPM_CONFIG_REGISTRY", &npm]);
         push(
             &mut args,
             &["--setenv", "npm_config_ignore_scripts", "true"],
         );
+        push(&mut args, &["--setenv", "PIP_INDEX_URL", &pypi]);
+        push(&mut args, &["--setenv", "UV_DEFAULT_INDEX", &pypi]);
+        // The mirror checks a file's checksum before it sends the first byte,
+        // so a large wheel can take the whole upstream download time before
+        // any response starts. pip's 15 s default and uv's default would
+        // give up on a 17 MB wheel (see docs/DECISIONS.md, Phase 14).
+        push(&mut args, &["--setenv", "PIP_TIMEOUT", MIRROR_TIMEOUT_SECS]);
         push(
             &mut args,
-            &[
-                "--setenv",
-                "PIP_INDEX_URL",
-                &format!("{MIRROR_URL}/pypi/simple/"),
-            ],
+            &["--setenv", "UV_HTTP_TIMEOUT", MIRROR_TIMEOUT_SECS],
         );
     }
     push(&mut args, &["--chdir", WORKSPACE]);
@@ -635,6 +637,16 @@ mod tests {
             "{joined}"
         );
         assert!(
+            joined.contains("--setenv PNPM_CONFIG_REGISTRY http://127.0.0.1:3130/npm/"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--setenv UV_DEFAULT_INDEX http://127.0.0.1:3130/pypi/simple/"),
+            "{joined}"
+        );
+        assert!(joined.contains("--setenv PIP_TIMEOUT 120"), "{joined}");
+        assert!(joined.contains("--setenv UV_HTTP_TIMEOUT 120"), "{joined}");
+        assert!(
             joined.contains("--mirror-listen 127.0.0.1:3130 --mirror-socket /run/pks/mirror.sock"),
             "{joined}"
         );
@@ -650,5 +662,6 @@ mod tests {
         assert!(!joined.contains("mirror"), "{joined}");
         assert!(!joined.contains("npm_config_registry"), "{joined}");
         assert!(!joined.contains("PIP_INDEX_URL"), "{joined}");
+        assert!(!joined.contains("PIP_TIMEOUT"), "{joined}");
     }
 }
