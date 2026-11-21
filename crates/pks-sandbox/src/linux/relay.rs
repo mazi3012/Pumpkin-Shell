@@ -3,7 +3,7 @@
 //! other network, so the proxy is the only way out.
 //!
 //! Two kinds of listener run here:
-//! - the proxy listener on `127.0.0.1:3128`. The IDE speaks HTTP `CONNECT` to
+//! - the proxy listener on `127.0.0.1:3129`. The IDE speaks HTTP `CONNECT` to
 //!   it, so bytes are copied as they are;
 //! - one listener per host port the user listed. The IDE speaks the port's
 //!   own protocol to `127.0.0.1:<port>` and has no idea about the proxy, so
@@ -17,7 +17,7 @@ use std::thread;
 /// Where the proxy's socket appears inside the sandbox.
 pub const PROXY_SOCKET_IN: &str = "/run/pks/proxy.sock";
 /// The loopback address the IDE is told to use as its proxy.
-pub const PROXY_LISTEN: &str = "127.0.0.1:3128";
+pub const PROXY_LISTEN: &str = "127.0.0.1:3129";
 /// Largest reply head the relay will read from the proxy.
 const MAX_REPLY_BYTES: usize = 1024;
 
@@ -109,7 +109,9 @@ fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
-fn pipe(tcp: TcpStream, unix: UnixStream) {
+/// Copies bytes both ways between a TCP stream and a Unix stream until either
+/// side closes.
+pub(crate) fn pipe(tcp: TcpStream, unix: UnixStream) {
     let (Ok(mut tcp_read), Ok(mut unix_write)) = (tcp.try_clone(), unix.try_clone()) else {
         return;
     };
@@ -126,7 +128,7 @@ fn pipe(tcp: TcpStream, unix: UnixStream) {
 /// The address the relay listens on, as a parsed value.
 #[must_use]
 pub fn listen_address() -> SocketAddr {
-    SocketAddr::from((Ipv4Addr::LOCALHOST, 3128))
+    SocketAddr::from((Ipv4Addr::LOCALHOST, 3129))
 }
 
 #[cfg(test)]
@@ -136,7 +138,7 @@ mod tests {
     #[test]
     fn the_relay_refuses_a_non_loopback_address() {
         let result = run(
-            "0.0.0.0:3128".parse().unwrap_or_else(|_| listen_address()),
+            "0.0.0.0:3129".parse().unwrap_or_else(|_| listen_address()),
             Path::new("/nonexistent"),
             &[],
         );

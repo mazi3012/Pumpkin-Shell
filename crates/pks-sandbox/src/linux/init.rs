@@ -111,12 +111,18 @@ pub fn run(
     ro: &[PathBuf],
     command: &[OsString],
     relay: Option<&Relay>,
+    callback: Option<&Callback>,
 ) -> SandboxError {
     if let Err(error) = restrict_filesystem(rw, ro) {
         return error;
     }
     if let Some(relay) = relay
         && let Err(error) = start_relay(relay)
+    {
+        return error;
+    }
+    if let Some(callback) = callback
+        && let Err(error) = start_callback(callback)
     {
         return error;
     }
@@ -131,6 +137,44 @@ pub fn run(
         context: format!("cannot run {}", PathBuf::from(program).display()),
         source: error,
     }
+}
+
+/// The OAuth callback agent to start before the IDE (Phase 12.2).
+#[derive(Debug, Clone)]
+pub struct Callback {
+    /// Socket the agent creates in the shared broker directory.
+    pub socket: PathBuf,
+    /// The IDE's listener inside the sandbox.
+    pub target: std::net::SocketAddr,
+}
+
+/// Starts the callback agent as a child process and waits until its socket
+/// exists. Like the relay, it ends with the sandbox.
+fn start_callback(callback: &Callback) -> Result<(), SandboxError> {
+    let setup = |what: &str| SandboxError::Setup(format!("callback: {what}"));
+    let exe = std::env::current_exe().map_err(|e| SandboxError::Io {
+        context: "cannot find the in-sandbox binary".to_owned(),
+        source: e,
+    })?;
+    let _child = Command::new(exe)
+        .arg("sandbox-callback")
+        .arg("--socket")
+        .arg(&callback.socket)
+        .arg("--target")
+        .arg(callback.target.to_string())
+        .spawn()
+        .map_err(|e| SandboxError::Io {
+            context: "cannot start the callback agent".to_owned(),
+            source: e,
+        })?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if callback.socket.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(setup("its socket did not appear within 5 seconds"))
 }
 
 /// A relay to start before the IDE: listen address and the proxy socket.

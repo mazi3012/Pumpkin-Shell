@@ -499,7 +499,7 @@ pub fn read_user_policy(config_dir: &Path) -> Result<Option<PolicyFile>, PolicyE
 
 /// The port the in-sandbox relay listens on for the proxy (PRD FR-NET).
 /// Refused as a host port, because the two relays would collide.
-pub const PROXY_RELAY_PORT: u16 = 3128;
+pub const PROXY_RELAY_PORT: u16 = 3129;
 
 /// An empty user policy: defaults only.
 #[must_use]
@@ -1119,7 +1119,7 @@ mod tests {
 
     #[test]
     fn port_zero_and_the_proxy_relay_port_are_refused_as_host_ports() {
-        for port in ["0", "3128"] {
+        for port in ["0", "3129"] {
             let text = format!("version = 1\n[network]\nhost_ports = [{port}]\n");
             assert!(PolicyFile::parse(&text).is_err(), "{port} accepted");
         }

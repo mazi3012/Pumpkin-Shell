@@ -11,7 +11,7 @@ use crate::SandboxError;
 
 /// The port of the in-sandbox proxy relay. Must match
 /// `pks_core::policy::PROXY_RELAY_PORT`, which refuses it as a host port.
-const PROXY_RELAY_PORT: u16 = 3128;
+const PROXY_RELAY_PORT: u16 = 3129;
 
 /// A host path bound inside the repo's mount point, over what the repo has
 /// there. Used to give the IDE a staged copy of a protected path (PRD FR-WS).
@@ -76,6 +76,15 @@ pub struct LaunchSpec {
     /// (bubblewrap runs with `--new-session`), so pausing and killing the
     /// session signal that group. `None` writes nothing.
     pub pid_file: Option<PathBuf>,
+    /// Host directory shared with the sandbox for the brokers (Phase 12): the
+    /// request socket, and the callback socket the in-sandbox agent creates.
+    /// `None` runs the IDE with no broker: `xdg-open` and `git` are the
+    /// system programs, and nothing can reach the host.
+    pub broker_dir: Option<PathBuf>,
+    /// Where the backend writes the nested display's number and access file
+    /// while the IDE runs (`DISPLAY=` and `XAUTHORITY=` lines), so the host
+    /// can read and set the sandbox clipboard. Removed when the IDE exits.
+    pub display_file: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -315,6 +324,8 @@ mod tests {
                 host_ports: Vec::new(),
                 binds: Vec::new(),
                 pid_file: None,
+                broker_dir: None,
+                display_file: None,
             };
             Ok(Self { _dir: dir, spec })
         }
@@ -565,7 +576,7 @@ mod tests {
 
     #[test]
     fn host_port_zero_and_the_proxy_relay_port_are_refused() -> TestResult {
-        for port in [0u16, 3128] {
+        for port in [0u16, 3129] {
             let mut host = Host::new()?;
             host.spec.host_ports = vec![port];
             assert!(check(&host.spec).is_err(), "port {port} was accepted");

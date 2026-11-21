@@ -103,7 +103,7 @@ impl NestedDisplay {
         for number in FIRST_DISPLAY..=LAST_DISPLAY {
             let socket = PathBuf::from(format!("{X11_DIR}/X{number}"));
             let lock = PathBuf::from(format!("/tmp/.X{number}-lock"));
-            if socket.exists() || lock.exists() {
+            if (socket.exists() || lock.exists()) && !reclaim_if_stale(&lock, &socket) {
                 continue;
             }
             let xauthority = dir.join(format!("Xauthority-{number}"));
@@ -148,6 +148,49 @@ impl NestedDisplay {
     pub fn xauthority(&self) -> &Path {
         &self.xauthority
     }
+}
+
+/// The process ID in an X lock file (`/tmp/.X20-lock`): digits, then a newline.
+fn lock_pid(text: &str) -> Option<i32> {
+    text.trim().parse().ok().filter(|pid| *pid > 0)
+}
+
+/// Whether the process `pid` is gone. A process that exists but belongs to
+/// another user still counts as alive.
+#[allow(unsafe_code)]
+fn process_is_gone(pid: i32) -> bool {
+    // SAFETY: kill(2) with signal 0 only checks that the process exists; it
+    // reads two integers and sends nothing.
+    let rc = unsafe { libc::kill(pid, 0) };
+    rc != 0 && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+}
+
+/// A display number whose lock or socket was left by a process that no longer
+/// exists is free to use again. Returns `true` after removing the leftovers.
+/// A lock owned by another user, with no readable process ID, or whose process
+/// is alive is never touched.
+fn reclaim_if_stale(lock: &Path, socket: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    let Ok(text) = fs::read_to_string(lock) else {
+        return false;
+    };
+    let Some(pid) = lock_pid(&text) else {
+        return false;
+    };
+    // Only our own leftovers are removed.
+    let ours = fs::metadata(lock).is_ok_and(|meta| meta.uid() == effective_uid());
+    if !ours || !process_is_gone(pid) {
+        return false;
+    }
+    let _ = fs::remove_file(lock);
+    let _ = fs::remove_file(socket);
+    true
+}
+
+#[allow(unsafe_code)]
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid takes no arguments and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 impl Drop for NestedDisplay {
@@ -213,8 +256,12 @@ fn spawn_xephyr(
         // No TCP: the server is reachable only through its Unix socket.
         .arg("-nolisten")
         .arg("tcp")
-        // Stop when the last client disconnects.
-        .arg("-terminate")
+        // Do not grab the host's keyboard and mouse. With the grab, the user
+        // cannot click an approval popup on the desktop while the sandbox
+        // window has focus, and the session looks frozen.
+        .arg("-no-host-grab")
+        // No -terminate: the server must outlive the short connections of the
+        // host's clipboard watcher. It is stopped when NestedDisplay is dropped.
         .arg("-auth")
         .arg(xauthority)
         .arg("-title")
@@ -288,6 +335,62 @@ mod tests {
                 ..
             })
         ));
+        Ok(())
+    }
+
+    /// A process ID that is not running: a short-lived child, already reaped.
+    fn dead_pid() -> Result<i32, Box<dyn std::error::Error>> {
+        let mut child = Command::new("true").spawn()?;
+        let pid = i32::try_from(child.id())?;
+        child.wait()?;
+        Ok(pid)
+    }
+
+    #[test]
+    fn a_lock_file_holds_a_positive_process_id() {
+        assert_eq!(lock_pid("      1234\n"), Some(1234));
+        assert_eq!(lock_pid("0\n"), None);
+        assert_eq!(lock_pid("-5"), None);
+        assert_eq!(lock_pid("abc"), None);
+        assert_eq!(lock_pid(""), None);
+    }
+
+    #[test]
+    fn a_lock_left_by_a_dead_process_is_removed_with_its_socket()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let lock = dir.path().join(".X77-lock");
+        let socket = dir.path().join("X77");
+        fs::write(&lock, format!("{:>10}\n", dead_pid()?))?;
+        fs::write(&socket, "")?;
+        assert!(reclaim_if_stale(&lock, &socket));
+        assert!(!lock.exists() && !socket.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_lock_of_a_running_process_is_left_alone() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let lock = dir.path().join(".X78-lock");
+        let socket = dir.path().join("X78");
+        // This test process is running.
+        fs::write(&lock, format!("{:>10}\n", std::process::id()))?;
+        fs::write(&socket, "")?;
+        assert!(!reclaim_if_stale(&lock, &socket));
+        assert!(lock.exists() && socket.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn a_lock_with_no_readable_process_id_is_left_alone() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = tempfile::tempdir()?;
+        let lock = dir.path().join(".X79-lock");
+        let socket = dir.path().join("X79");
+        fs::write(&lock, "not a number\n")?;
+        fs::write(&socket, "")?;
+        assert!(!reclaim_if_stale(&lock, &socket));
+        assert!(lock.exists());
         Ok(())
     }
 }

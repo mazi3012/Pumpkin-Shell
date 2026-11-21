@@ -1,10 +1,12 @@
 //! The Linux backend (PRD §6.1): bubblewrap, a nested Xephyr display, Landlock
 //! and a seccomp filter. No root is needed at runtime.
 
+pub mod broker;
 pub mod bwrap;
 pub mod display;
 pub mod init;
 pub mod relay;
+pub mod shim;
 pub mod signal;
 pub mod watch;
 
@@ -93,6 +95,14 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<(), SandboxError> {
         })
 }
 
+/// The wrappers the sandbox gets: the ones whose program exists on the host.
+fn installed_shims() -> Vec<&'static str> {
+    ["xdg-open", "git"]
+        .into_iter()
+        .filter(|name| Path::new("/usr/bin").join(name).is_file())
+        .collect()
+}
+
 impl SandboxBackend for LinuxBackend {
     fn name(&self) -> &'static str {
         "linux-bwrap"
@@ -108,6 +118,14 @@ impl SandboxBackend for LinuxBackend {
                 source,
             })?;
         let display = NestedDisplay::start(&self.tools, session.path(), spec.display_size)?;
+        if let Some(path) = &spec.display_file {
+            let text = format!(
+                "DISPLAY=:{}\nXAUTHORITY={}\n",
+                display.number(),
+                display.xauthority().display()
+            );
+            write_private(path, text.as_bytes())?;
+        }
         let (passwd, group) = write_identity(session.path())?;
         let plan = Plan {
             repo: spec.repo.clone(),
@@ -122,6 +140,8 @@ impl SandboxBackend for LinuxBackend {
             init_exe: self.init_exe.clone(),
             proxy_socket: spec.proxy_socket.clone(),
             host_ports: spec.host_ports.clone(),
+            broker_dir: spec.broker_dir.clone(),
+            shims: installed_shims(),
             binds: spec.binds.clone(),
         };
         let mut child = Command::new(&self.bwrap)
@@ -146,6 +166,9 @@ impl SandboxBackend for LinuxBackend {
         });
         if let Some(pid_file) = &spec.pid_file {
             let _ = fs::remove_file(pid_file);
+        }
+        if let Some(path) = &spec.display_file {
+            let _ = fs::remove_file(path);
         }
         // The display stops when `display` is dropped, after the IDE exits.
         drop(display);

@@ -1,5 +1,11 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
+#[cfg(target_os = "linux")]
+mod ask;
+#[cfg(target_os = "linux")]
+mod broker;
+#[cfg(target_os = "linux")]
+mod clipboard;
 mod doctor;
 mod ide;
 mod log;
@@ -69,6 +75,12 @@ enum Command {
         /// Path that may only be read (repeatable).
         #[arg(long = "ro")]
         ro: Vec<PathBuf>,
+        /// Socket the OAuth callback agent creates (Phase 12.2). Needs --callback-target.
+        #[arg(long = "callback-socket", requires = "callback_target")]
+        callback_socket: Option<PathBuf>,
+        /// The IDE's listener inside the sandbox for the callback. Needs --callback-socket.
+        #[arg(long = "callback-target", requires = "callback_socket")]
+        callback_target: Option<std::net::SocketAddr>,
         /// Loopback address the in-sandbox relay listens on (Phase 9).
         #[arg(long = "relay-listen", requires = "relay_socket")]
         relay_listen: Option<std::net::SocketAddr>,
@@ -81,6 +93,16 @@ enum Command {
         /// The program to run after the restrictions are applied.
         #[arg(last = true, required = true, num_args = 1..)]
         command: Vec<OsString>,
+    },
+    /// Internal: passes connections from a Unix socket to the IDE's loopback listener.
+    #[command(hide = true)]
+    SandboxCallback {
+        /// Unix socket to create in the broker directory.
+        #[arg(long)]
+        socket: PathBuf,
+        /// The IDE's listener inside the sandbox.
+        #[arg(long)]
+        target: std::net::SocketAddr,
     },
     /// Internal: forwards loopback TCP to the proxy's Unix socket, inside the sandbox.
     #[command(hide = true)]
@@ -199,6 +221,18 @@ impl From<FailOn> for Severity {
 }
 
 fn main() -> ExitCode {
+    // Inside the sandbox, `xdg-open` and `git` are this binary under those
+    // names (Phase 12). It acts on the name it was started under.
+    #[cfg(target_os = "linux")]
+    if let Some(name) = std::env::args_os().next().and_then(|arg| {
+        PathBuf::from(arg)
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+    }) && (name == "xdg-open" || name == "git")
+    {
+        let args: Vec<OsString> = std::env::args_os().collect();
+        return pks_sandbox::linux::shim::run(&name, &args);
+    }
     match Cli::parse().command {
         Some(Command::Doctor { json }) => doctor::run(json),
         Some(Command::Scan {
@@ -215,6 +249,8 @@ fn main() -> ExitCode {
             relay_listen,
             relay_socket,
             relay_host_ports,
+            callback_socket,
+            callback_target,
             command,
         }) => ide::sandbox_init(
             &rw,
@@ -222,8 +258,10 @@ fn main() -> ExitCode {
             relay_listen,
             relay_socket,
             &relay_host_ports,
+            callback_socket.zip(callback_target),
             &command,
         ),
+        Some(Command::SandboxCallback { socket, target }) => ide::sandbox_callback(&socket, target),
         Some(Command::SandboxRelay {
             listen,
             socket,

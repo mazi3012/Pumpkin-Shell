@@ -20,7 +20,7 @@ pub const SANDBOX_HOME: &str = "/home/sandbox";
 /// Where the Xauthority cookie appears inside the sandbox.
 pub const XAUTHORITY_IN: &str = "/tmp/.pks-xauthority";
 /// The proxy URL the IDE is given.
-pub const PROXY_URL: &str = "http://127.0.0.1:3128";
+pub const PROXY_URL: &str = "http://127.0.0.1:3129";
 /// Proxy variables set in the IDE environment. Lowercase and uppercase are
 /// both set, as tools differ.
 pub const PROXY_ENV: [&str; 6] = [
@@ -34,11 +34,22 @@ pub const PROXY_ENV: [&str; 6] = [
 /// Hosts that bypass the proxy (loopback only).
 pub const NO_PROXY_VALUE: &str = "localhost,127.0.0.1,::1";
 /// Where the relay listens inside the sandbox.
-pub const PROXY_LISTEN: &str = "127.0.0.1:3128";
+pub const PROXY_LISTEN: &str = "127.0.0.1:3129";
 /// Where the proxy's socket appears inside the sandbox.
 pub const PROXY_SOCKET_IN: &str = "/run/pks/proxy.sock";
 /// Where the Pumpkin-Shell binary appears, to run the in-sandbox step.
 pub const INIT_IN: &str = "/run/pks/pumpkin-shell";
+/// Where the broker directory appears inside the sandbox (Phase 12).
+pub const BROKER_IN: &str = "/run/pks/broker";
+/// The request socket the wrappers send to. Created by the host.
+pub const BROKER_REQUEST_IN: &str = "/run/pks/broker/request.sock";
+/// The callback socket the in-sandbox agent creates.
+pub const BROKER_CALLBACK_IN: &str = "/run/pks/broker/callback.sock";
+/// The IDE's OAuth callback listener inside the sandbox, and the host's port
+/// for the same callback (PRD FR-NET, Phase 12.2).
+pub const CALLBACK_TARGET: &str = "127.0.0.1:3128";
+/// Where the real git is mounted, so the `git` wrapper can run it.
+pub const REAL_GIT_IN: &str = "/run/pks/git-real";
 /// The only environment variables the IDE gets (PRD §6.1, "filtered env").
 pub const ENV_ALLOWLIST: [&str; 9] = [
     "HOME",
@@ -81,6 +92,11 @@ pub struct Plan {
     pub host_ports: Vec<u16>,
     /// Paths bound over parts of the repo, parents first.
     pub binds: Vec<crate::spec::Bind>,
+    /// Host directory for the brokers, or `None` for no broker.
+    pub broker_dir: Option<PathBuf>,
+    /// System programs that get a broker wrapper: `xdg-open` and `git`, the
+    /// ones installed on the host.
+    pub shims: Vec<&'static str>,
 }
 
 fn push(args: &mut Vec<OsString>, values: &[&str]) {
@@ -168,6 +184,28 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     // The egress proxy's socket. The IDE reaches it through the relay on
     // loopback; there is no other route out (the network is unshared).
     push_path(&mut args, "--ro-bind", &plan.proxy_socket, PROXY_SOCKET_IN);
+    // The broker (Phase 12): a shared directory for the request and callback
+    // sockets, and the wrappers over `xdg-open` and `git`. The real git is
+    // mounted first, under a private path. Every wrapper is this binary.
+    if let Some(dir) = &plan.broker_dir {
+        push_path(&mut args, "--bind", dir, BROKER_IN);
+        if plan.shims.contains(&"git") {
+            push_path(
+                &mut args,
+                "--ro-bind",
+                Path::new("/usr/bin/git"),
+                REAL_GIT_IN,
+            );
+        }
+        for name in &plan.shims {
+            push_path(
+                &mut args,
+                "--ro-bind",
+                &plan.init_exe,
+                &format!("/usr/bin/{name}"),
+            );
+        }
+    }
     // The environment: nothing but the allowlist.
     let display = format!(":{}", plan.display);
     push(&mut args, &["--setenv", "HOME", SANDBOX_HOME]);
@@ -221,6 +259,19 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     for port in &plan.host_ports {
         push(&mut args, &["--relay-host-port", &port.to_string()]);
     }
+    // The OAuth callback agent (Phase 12.2): listens in the broker directory
+    // and passes each connection to the IDE's listener on loopback.
+    if plan.broker_dir.is_some() {
+        push(
+            &mut args,
+            &[
+                "--callback-socket",
+                BROKER_CALLBACK_IN,
+                "--callback-target",
+                CALLBACK_TARGET,
+            ],
+        );
+    }
     // `--` ends the init options. Everything after it is the IDE command.
     args.push(OsString::from("--"));
     args.push(plan.ide_binary.as_os_str().to_owned());
@@ -267,6 +318,8 @@ mod tests {
             proxy_socket: PathBuf::from("/srv/run/proxy.sock"),
             host_ports: Vec::new(),
             binds: Vec::new(),
+            broker_dir: None,
+            shims: Vec::new(),
         }
     }
 
