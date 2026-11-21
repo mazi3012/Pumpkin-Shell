@@ -14,7 +14,7 @@ use std::collections::HashSet;
 use std::collections::hash_map::DefaultHasher;
 use std::ffi::OsString;
 use std::hash::{Hash, Hasher};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -33,6 +33,8 @@ const POLL: Duration = Duration::from_secs(1);
 const WAIT_FOR_DISPLAY: Duration = Duration::from_secs(60);
 /// Characters of the text shown in a popup.
 const PREVIEW: usize = 200;
+/// How long a clipboard read may take before it is abandoned.
+const READ_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// The sandbox's display: its `DISPLAY` and access file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,7 +62,8 @@ pub fn parse_display_file(text: &str) -> Option<Nested> {
 }
 
 /// Reads the clipboard of `on` (or the host's own clipboard when `None`).
-/// `None` when it is empty, not text, too large, or xclip fails.
+/// `None` when it is empty, not text, too large, or xclip fails or does not
+/// answer in time. A sandbox that stops answering must not stall the watcher.
 fn read(on: Option<&Nested>) -> Option<String> {
     let mut command = Command::new("xclip");
     command
@@ -72,11 +75,40 @@ fn read(on: Option<&Nested>) -> Option<String> {
             .env("DISPLAY", &nested.display)
             .env("XAUTHORITY", &nested.xauthority);
     }
-    let output = command.output().ok()?;
-    if !output.status.success() || output.stdout.is_empty() || output.stdout.len() > MAX_BYTES {
+    let bytes = capture(&mut command)?;
+    if bytes.is_empty() || bytes.len() > MAX_BYTES {
         return None;
     }
-    String::from_utf8(output.stdout).ok()
+    String::from_utf8(bytes).ok()
+}
+
+/// Runs `command` and returns its output, or `None` when it fails or does not
+/// finish within `READ_TIMEOUT`. The output is read up to one byte past the
+/// limit, so a huge clipboard cannot exhaust memory.
+fn capture(command: &mut Command) -> Option<Vec<u8>> {
+    let mut child = command.stdout(Stdio::piped()).spawn().ok()?;
+    let stdout = child.stdout.take()?;
+    let reader = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout.take(MAX_BYTES as u64 + 1).read_to_end(&mut bytes);
+        bytes
+    });
+    let deadline = Instant::now() + READ_TIMEOUT;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let bytes = reader.join().ok()?;
+                return status.success().then_some(bytes);
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(20)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = reader.join();
+                return None;
+            }
+        }
+    }
 }
 
 /// Sets the clipboard of `on` (or the host's own clipboard when `None`).
@@ -157,9 +189,7 @@ pub fn watch(stop: Arc<AtomicBool>, session_dir: PathBuf, record: impl Fn(&str, 
                         ask::clean(&text, PREVIEW)
                     );
                     let yes = "Copy to my clipboard";
-                    let allowed = ask::choose(desktop.clone(), title, &body, &[yes, "Don't copy"])
-                        .as_deref()
-                        == Some(yes);
+                    let allowed = ask::confirm(desktop.clone(), title, &body, yes, "Don't copy");
                     record("CLIP-COPY", text.len(), allowed);
                     if allowed {
                         match write(None, &text) {
@@ -186,9 +216,7 @@ pub fn watch(stop: Arc<AtomicBool>, session_dir: PathBuf, record: impl Fn(&str, 
                         ask::clean(&text, PREVIEW)
                     );
                     let yes = "Send to Kiro";
-                    let allowed = ask::choose(desktop.clone(), title, &body, &[yes, "Don't send"])
-                        .as_deref()
-                        == Some(yes);
+                    let allowed = ask::confirm(desktop.clone(), title, &body, yes, "Don't send");
                     record("CLIP-PASTE", text.len(), allowed);
                     if allowed {
                         match write(Some(&nested), &text) {
@@ -219,6 +247,20 @@ mod tests {
             })
         );
         assert_eq!(parse_display_file("DISPLAY=:62\n"), None);
+    }
+
+    #[test]
+    fn a_command_that_answers_is_read_and_one_that_never_does_is_abandoned() {
+        assert_eq!(
+            capture(Command::new("printf").arg("hi")),
+            Some(b"hi".to_vec())
+        );
+        let started = Instant::now();
+        assert_eq!(capture(Command::new("sleep").arg("30")), None);
+        assert!(
+            started.elapsed() < Duration::from_secs(10),
+            "waited too long"
+        );
     }
 
     #[test]

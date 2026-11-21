@@ -47,16 +47,7 @@ pub(crate) fn choose(
     for option in options {
         command.arg(option);
     }
-    // A short notice on the desktop too, so a popup that opens behind another
-    // window is still noticed. Best effort: a missing notify-send is ignored.
-    let _ = Command::new("notify-send")
-        .arg("--app-name=Pumpkin-Shell")
-        .arg(clean(title, 120))
-        .arg("Answer the window that just opened on your desktop.")
-        .env("DISPLAY", &display)
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .status();
+    notify(&display, title);
     let output = command.output().ok()?;
     if !output.status.success() {
         return None;
@@ -68,6 +59,80 @@ pub(crate) fn choose(
         .iter()
         .find(|option| **option == chosen)
         .map(|option| (*option).to_owned())
+}
+
+/// Shows a yes/no popup with two buttons. `true` only for the yes button.
+/// Closing the window, timing out, or no desktop all count as no.
+#[must_use]
+pub(crate) fn confirm(
+    display: Option<OsString>,
+    title: &str,
+    text: &str,
+    yes: &str,
+    no: &str,
+) -> bool {
+    let Some(display) = display.filter(|value| !value.is_empty()) else {
+        return false;
+    };
+    notify(&display, title);
+    let status = Command::new("zenity")
+        .args(["--question", "--title"])
+        .arg(clean(title, 120))
+        .arg("--text")
+        .arg(clean(text, MAX_TEXT))
+        .args([
+            "--no-markup",
+            "--width",
+            "520",
+            "--timeout",
+            TIMEOUT_SECONDS,
+            "--ok-label",
+        ])
+        .arg(clean(yes, 40))
+        .arg("--cancel-label")
+        .arg(clean(no, 40))
+        .env("DISPLAY", display)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+    matches!(status, Ok(status) if status.success())
+}
+
+/// Shows a notice with one OK button, for a refused request. Returns when the
+/// user closes it, or after the timeout.
+pub(crate) fn notice(display: Option<OsString>, title: &str, text: &str) {
+    let Some(display) = display.filter(|value| !value.is_empty()) else {
+        return;
+    };
+    notify(&display, title);
+    let _ = Command::new("zenity")
+        .args(["--warning", "--title"])
+        .arg(clean(title, 120))
+        .arg("--text")
+        .arg(clean(text, MAX_TEXT))
+        .args([
+            "--no-markup",
+            "--width",
+            "520",
+            "--timeout",
+            TIMEOUT_SECONDS,
+        ])
+        .env("DISPLAY", display)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
+}
+
+/// A short desktop notice saying where to answer. Best effort.
+fn notify(display: &OsString, title: &str) {
+    let _ = Command::new("notify-send")
+        .arg("--app-name=Pumpkin-Shell")
+        .arg(clean(title, 120))
+        .arg("Answer the window that just opened on your desktop.")
+        .env("DISPLAY", display)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
 
 /// Removes control characters (except newlines) and cuts the text to `max`

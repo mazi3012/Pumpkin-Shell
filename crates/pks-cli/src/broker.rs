@@ -141,16 +141,16 @@ impl Handler for Host {
                     "Kiro wants to push branch {branch} to remote {remote} of:\n{}",
                     self.repo.display()
                 );
-                match ask::choose(
+                if ask::confirm(
                     self.desktop.clone(),
                     "Pumpkin-Shell: push to git?",
                     &text,
-                    &["Push", "Deny"],
-                )
-                .as_deref()
-                {
-                    Some("Push") => Decision::Allow,
-                    _ => Decision::Deny,
+                    "Push",
+                    "Deny",
+                ) {
+                    Decision::Allow
+                } else {
+                    Decision::Deny
                 }
             }
         };
@@ -164,11 +164,10 @@ impl Handler for Host {
 
     fn warn(&self, message: &str) {
         eprintln!("broker: {message}");
-        ask::choose(
+        ask::notice(
             self.desktop.clone(),
             "Pumpkin-Shell: blocked",
             &format!("Kiro tried a command that is blocked:\n\n{message}"),
-            &["OK"],
         );
     }
 
