@@ -48,7 +48,7 @@ host_ports = [5432]
 
 - The sandbox reaches `127.0.0.1:<port>` only for listed ports; the proxy relays to the host's `127.0.0.1:<port>`.
 - Logged as NOTICE `NET-HOST-PORT`, not WARN.
-- Not enabled by default. Port 3128 is reserved for the in-sandbox proxy relay and is refused.
+- Not enabled by default. Port 3129 is reserved for the in-sandbox proxy relay and is refused.
 
 ## Upload Byte Counters
 

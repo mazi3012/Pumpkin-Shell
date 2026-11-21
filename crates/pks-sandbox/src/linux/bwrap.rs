@@ -20,7 +20,7 @@ pub const SANDBOX_HOME: &str = "/home/sandbox";
 /// Where the Xauthority cookie appears inside the sandbox.
 pub const XAUTHORITY_IN: &str = "/tmp/.pks-xauthority";
 /// The proxy URL the IDE is given.
-pub const PROXY_URL: &str = "http://127.0.0.1:3128";
+pub const PROXY_URL: &str = "http://127.0.0.1:3129";
 /// Proxy variables set in the IDE environment. Lowercase and uppercase are
 /// both set, as tools differ.
 pub const PROXY_ENV: [&str; 6] = [
@@ -34,7 +34,7 @@ pub const PROXY_ENV: [&str; 6] = [
 /// Hosts that bypass the proxy (loopback only).
 pub const NO_PROXY_VALUE: &str = "localhost,127.0.0.1,::1";
 /// Where the relay listens inside the sandbox.
-pub const PROXY_LISTEN: &str = "127.0.0.1:3128";
+pub const PROXY_LISTEN: &str = "127.0.0.1:3129";
 /// Where the proxy's socket appears inside the sandbox.
 pub const PROXY_SOCKET_IN: &str = "/run/pks/proxy.sock";
 /// Where the Pumpkin-Shell binary appears, to run the in-sandbox step.
