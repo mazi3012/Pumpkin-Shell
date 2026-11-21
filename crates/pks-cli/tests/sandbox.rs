@@ -192,6 +192,7 @@ impl Layout {
             binds: Vec::new(),
             pid_file: None,
             broker_dir: None,
+            display_file: None,
         }
     }
 }

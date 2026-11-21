@@ -81,6 +81,10 @@ pub struct LaunchSpec {
     /// `None` runs the IDE with no broker: `xdg-open` and `git` are the
     /// system programs, and nothing can reach the host.
     pub broker_dir: Option<PathBuf>,
+    /// Where the backend writes the nested display's number and access file
+    /// while the IDE runs (`DISPLAY=` and `XAUTHORITY=` lines), so the host
+    /// can read and set the sandbox clipboard. Removed when the IDE exits.
+    pub display_file: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -321,6 +325,7 @@ mod tests {
                 binds: Vec::new(),
                 pid_file: None,
                 broker_dir: None,
+                display_file: None,
             };
             Ok(Self { _dir: dir, spec })
         }

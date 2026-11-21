@@ -4,6 +4,8 @@
 mod ask;
 #[cfg(target_os = "linux")]
 mod broker;
+#[cfg(target_os = "linux")]
+mod clipboard;
 mod doctor;
 mod ide;
 mod log;

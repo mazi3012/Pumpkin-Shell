@@ -124,6 +124,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         binds: session.binds(),
         pid_file: Some(session.dir.join(pks_detect::PID_FILE)),
         broker_dir: Some(session.dir.join("broker")),
+        display_file: Some(session.dir.join(crate::clipboard::DISPLAY_FILE)),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -197,6 +198,34 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
             }
         })
     };
+    // Clipboard copy and paste (Phase 12). Not joined: it may be waiting on a
+    // popup, and the session should not wait for that.
+    {
+        let stop = std::sync::Arc::clone(&stop_watch);
+        let session_dir = session.dir.clone();
+        let log = std::sync::Arc::clone(&session.log);
+        let policy_hash = session.policy_hash.clone();
+        std::thread::spawn(move || {
+            crate::clipboard::watch(stop, session_dir, move |rule, bytes, allowed| {
+                let target = format!("{bytes} bytes");
+                let verdict = if allowed { "allow" } else { "deny" };
+                if let Ok(mut guard) = log.lock()
+                    && let Some(logger) = guard.as_mut()
+                {
+                    let _ = logger.append(
+                        &Record {
+                            policy_hash: &policy_hash,
+                            layer: "clip",
+                            target: &target,
+                            rule,
+                            verdict,
+                        },
+                        now_ms(),
+                    );
+                }
+            })
+        });
+    }
     let result = backend.run(&spec);
     stop_watch.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = watch_thread.join();
