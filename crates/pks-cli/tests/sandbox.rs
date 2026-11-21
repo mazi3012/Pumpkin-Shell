@@ -1089,3 +1089,36 @@ fn npm_installs_a_real_package_through_the_mirror_and_direct_access_is_refused()
     assert_ne!(direct.trim(), "0", "a direct registry connection succeeded");
     Ok(())
 }
+
+/// PRD FR-REG, end to end with the real PyPI: pip inside the sandbox installs
+/// a real package through the mirror. Needs internet access to pypi.org.
+#[test]
+fn pip_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = "cd /workspace || exit 2\npython3 -m pip install --no-deps --target /workspace/pylib requests==2.34.2 > /workspace/pip.log 2>&1 || exit 4\ntest -d /workspace/pylib/requests || exit 5\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    let status = status?;
+    let log = fs::read_to_string(layout.repo.join("pip.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; pip log:\n{log}");
+    Ok(())
+}

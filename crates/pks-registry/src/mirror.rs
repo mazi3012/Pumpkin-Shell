@@ -367,12 +367,18 @@ impl<S: Source> Mirror<S> {
     }
 
     fn pypi_file(&self, rest: &str) -> Reply {
-        let Some((project, filename)) = rest.split_once('/') else {
+        let Some((project, requested)) = rest.split_once('/') else {
             return Reply::refuse(400, "BAD-REQUEST", "a file needs a project and a filename");
         };
-        if filename.contains('/') || filename.is_empty() {
+        if requested.contains('/') || requested.is_empty() {
             return Reply::refuse(400, "BAD-REQUEST", "not a file name");
         }
+        // pip asks for `<wheel>.metadata` (PEP 658) before it downloads a wheel.
+        // It is the same file as the wheel for every check.
+        let (filename, metadata) = match requested.strip_suffix(".metadata") {
+            Some(base) => (base, true),
+            None => (requested, false),
+        };
         let (name, doc, notes) = match self.pypi_document(project) {
             Ok(parsed) => parsed,
             Err(reply) => return reply,
@@ -400,19 +406,34 @@ impl<S: Source> Mirror<S> {
             if let Some(blocked) = malware_block(&verdict, &name, &version, &mut notes) {
                 return blocked;
             }
-            return self.pypi_bytes(entry, notes);
+            return self.pypi_bytes(entry, notes, metadata);
         }
-        self.pypi_bytes(entry, notes)
+        self.pypi_bytes(entry, notes, metadata)
     }
 
-    fn pypi_bytes(&self, entry: &Value, notes: Vec<String>) -> Reply {
+    /// Serves a file, or its PEP 658 metadata (`<file>.metadata`, checked
+    /// against the sha256 the index gives for it). Both are verified before use.
+    fn pypi_bytes(&self, entry: &Value, notes: Vec<String>, metadata: bool) -> Reply {
         let Some(url) = entry.get("url").and_then(Value::as_str).map(str::to_owned) else {
             return Reply::refuse(502, "UPSTREAM", "the file has no URL");
         };
-        let sha256 = entry
-            .get("hashes")
-            .and_then(|h| h.get("sha256"))
-            .and_then(Value::as_str);
+        let (url, sha256) = if metadata {
+            let published = ["core-metadata", "data-dist-info-metadata"]
+                .iter()
+                .find_map(|key| {
+                    entry
+                        .get(*key)
+                        .and_then(|v| v.get("sha256"))
+                        .and_then(Value::as_str)
+                });
+            (format!("{url}.metadata"), published)
+        } else {
+            let hashed = entry
+                .get("hashes")
+                .and_then(|h| h.get("sha256"))
+                .and_then(Value::as_str);
+            (url, hashed)
+        };
         let Some(expected) = sha256.and_then(from_sha256_hex) else {
             return Reply::refuse(
                 502,
@@ -900,5 +921,56 @@ mod tests {
         let reply = m.handle("/pypi/packages/evil/evil-9.0.tar.gz");
         assert_eq!(reply.status, 403);
         assert!(json(&reply)["rule"] == "REG-MALWARE");
+    }
+
+    #[test]
+    fn a_wheel_metadata_file_is_served_when_its_published_sha256_matches() {
+        let wheel = b"wheel bytes";
+        let metadata = b"Metadata-Version: 2.1\nName: pkg\n";
+        let index = serde_json::json!({
+            "name": "pkg",
+            "versions": ["1.0"],
+            "files": [{
+                "filename": "pkg-1.0-py3-none-any.whl",
+                "url": "https://files.pythonhosted.org/w",
+                "upload-time": ago(100 * DAY),
+                "hashes": { "sha256": hex(&sha2::Sha256::digest(wheel)) },
+                "core-metadata": { "sha256": hex(&sha2::Sha256::digest(metadata)) },
+            }],
+        })
+        .to_string();
+        let fake = Fake::default()
+            .with("https://pypi.org/simple/pkg/", index)
+            .with(
+                "https://files.pythonhosted.org/w.metadata",
+                metadata.to_vec(),
+            );
+        let reply = mirror(fake).handle("/pypi/packages/pkg/pkg-1.0-py3-none-any.whl.metadata");
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.body, metadata);
+    }
+
+    #[test]
+    fn wheel_metadata_without_a_published_checksum_is_not_served() {
+        let index = serde_json::json!({
+            "name": "pkg",
+            "versions": ["1.0"],
+            "files": [{
+                "filename": "pkg-1.0-py3-none-any.whl",
+                "url": "https://files.pythonhosted.org/w",
+                "upload-time": ago(100 * DAY),
+                "hashes": { "sha256": "00" },
+            }],
+        })
+        .to_string();
+        let fake = Fake::default()
+            .with("https://pypi.org/simple/pkg/", index)
+            .with(
+                "https://files.pythonhosted.org/w.metadata",
+                b"metadata".to_vec(),
+            );
+        let reply = mirror(fake).handle("/pypi/packages/pkg/pkg-1.0-py3-none-any.whl.metadata");
+        assert_eq!(reply.status, 502);
+        assert!(json(&reply)["rule"] == "REG-INTEGRITY");
     }
 }
