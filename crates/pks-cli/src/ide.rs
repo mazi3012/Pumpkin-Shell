@@ -238,6 +238,15 @@ impl Session {
             .map_err(|e| format!("cannot create {}: {e}", sessions.display()))?;
         let dir = sessions.join(&id);
         create_private_dir(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+        // Review and approval need the repo path later, after the IDE exits.
+        let repo_text = repo.to_str().ok_or_else(|| {
+            format!(
+                "{} is not valid UTF-8, so the session cannot be reviewed",
+                repo.display()
+            )
+        })?;
+        std::fs::write(dir.join(pks_detect::REPO_FILE), repo_text)
+            .map_err(|e| format!("cannot record the repo path: {e}"))?;
         // The snapshot comes before the IDE starts. Without it, the session
         // does not start (PRD FR-WS: snapshot before launch).
         let commit = pks_core::snapshot::create(repo, &dir)

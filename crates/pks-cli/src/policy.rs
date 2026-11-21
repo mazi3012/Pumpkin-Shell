@@ -1,5 +1,4 @@
-//! `pumpkin-shell trust`, `pumpkin-shell allow`, `pumpkin-shell allow-write`,
-//! and `pumpkin-shell policy check`.
+//! `pumpkin-shell trust`, `pumpkin-shell allow` and `pumpkin-shell policy check`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -180,20 +179,6 @@ pub fn allow_domain(domain: &str) -> ExitCode {
     }
 
     println!("allow: added {endpoint} to {}", path.display());
-    ExitCode::SUCCESS
-}
-
-/// `pumpkin-shell allow-write <path>`: adds a write path to the user policy.
-///
-/// Note: This is a placeholder. Write allowlists are not yet implemented
-/// in the policy schema (Phase 10/11). For now, this just prints a message.
-pub fn allow_write(path: &str) -> ExitCode {
-    // Phase 11 TODO: Implement write allowlist in the policy schema.
-    // For now, this command exists but the feature is not yet wired up.
-    eprintln!("allow-write: path '{path}' noted.");
-    eprintln!(
-        "Note: Write allowlists are not yet enforced. This command will be fully implemented in a later phase."
-    );
     ExitCode::SUCCESS
 }
 

@@ -805,6 +805,16 @@ fn pausing_the_sandbox_stops_its_processes_until_resumed() -> TestResult {
         std::thread::sleep(Duration::from_millis(20));
     };
 
+    // If the test fails before the sandbox resumes, the stopped sandbox must
+    // not outlive it: it would hold a display number and its lock file.
+    struct KillOnDrop(i32);
+    impl Drop for KillOnDrop {
+        fn drop(&mut self) {
+            let _ = signal_tree(self.0, Signal::Kill);
+        }
+    }
+    // A drop guard: the binding is never read, it only lives to the end of the test.
+    let _guard = KillOnDrop(pid);
     signal_tree(pid, Signal::Stop)?;
     std::thread::sleep(Duration::from_secs(4));
     assert!(

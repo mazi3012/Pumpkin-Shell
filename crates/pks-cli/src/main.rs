@@ -129,9 +129,11 @@ enum Command {
         /// Domain to allow (host:port).
         domain: String,
     },
-    /// Allow writes to a path in the policy.
+    /// Approve one staged write of a session: copy it into the repo.
     AllowWrite {
-        /// Path pattern to allow.
+        /// The session id printed by `ide`.
+        session: String,
+        /// Path from the repo root, as listed by `review`.
         path: String,
     },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
@@ -233,7 +235,7 @@ fn main() -> ExitCode {
         Some(Command::Kill { session }) => watch::kill(&session),
         Some(Command::Review { session }) => review::run(&session),
         Some(Command::Allow { domain }) => policy::allow_domain(&domain),
-        Some(Command::AllowWrite { path }) => policy::allow_write(&path),
+        Some(Command::AllowWrite { session, path }) => review::allow_write(&session, &path),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

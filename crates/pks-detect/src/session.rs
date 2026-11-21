@@ -26,6 +26,8 @@ pub struct SessionInfo {
 pub const PID_FILE: &str = "ide.pid";
 /// File in a session directory that exists while the session is paused.
 pub const PAUSED_FILE: &str = "paused";
+/// File in a session directory with the repo path, as UTF-8 text.
+pub const REPO_FILE: &str = "repo";
 
 /// The sandbox's process ID from the PID file in `dir`. `None` when the file
 /// is missing or does not hold a number (the IDE is not running).
