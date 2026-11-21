@@ -398,28 +398,7 @@ impl Session {
             Box::new(unix_seconds),
             Box::new(osv),
         ));
-        let mirror_record: pks_registry::server::Record = {
-            let log = Arc::clone(&log);
-            let policy_hash = effective.hash();
-            Arc::new(move |note: &str| {
-                // A note reads "RULE detail"; the detail is the target.
-                let (rule, target) = note.split_once(' ').unwrap_or((note, ""));
-                if let Ok(mut guard) = log.lock()
-                    && let Some(logger) = guard.as_mut()
-                {
-                    let _ = logger.append(
-                        &Record {
-                            policy_hash: &policy_hash,
-                            layer: "registry",
-                            target,
-                            rule,
-                            verdict: "note",
-                        },
-                        now_ms(),
-                    );
-                }
-            })
-        };
+        let mirror_record = mirror_recorder(Arc::clone(&log), effective.hash());
         let mirror_stop = Arc::clone(&broker_stop);
         std::thread::spawn(move || {
             let _ =
@@ -586,6 +565,31 @@ fn unix_seconds() -> i64 {
 }
 
 #[cfg(target_os = "linux")]
+/// Writes the package mirror's notes to the session log under layer
+/// `registry`. A note reads "RULE detail"; the detail is the target.
+fn mirror_recorder(
+    log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
+    policy_hash: String,
+) -> pks_registry::server::Record {
+    std::sync::Arc::new(move |note: &str| {
+        let (rule, target) = note.split_once(' ').unwrap_or((note, ""));
+        if let Ok(mut guard) = log.lock()
+            && let Some(logger) = guard.as_mut()
+        {
+            let _ = logger.append(
+                &Record {
+                    policy_hash: &policy_hash,
+                    layer: "registry",
+                    target,
+                    rule,
+                    verdict: "note",
+                },
+                now_ms(),
+            );
+        }
+    })
+}
+
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
@@ -755,6 +759,28 @@ mod tests {
         assert_eq!(answer("session\n"), Some(Answer::AllowSession));
         assert_eq!(answer("d\n"), Some(Answer::Deny));
         assert_eq!(answer("maybe\n"), Some(Answer::Deny));
+    }
+
+    #[test]
+    fn a_mirror_note_is_written_to_the_session_log_under_the_registry_layer() {
+        use std::sync::{Arc, Mutex};
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let key = pks_core::keys::load_or_create_signing_key(&dir.path().join("keys"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let path = dir.path().join("session.jsonl");
+        let logger = pks_core::log::Logger::create(&path, key, "test-session")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let record = mirror_recorder(Arc::new(Mutex::new(Some(logger))), "hash-1".to_owned());
+        record("REG-COOLDOWN pkg@2.0.0 hidden");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{e}"));
+        let last = text.lines().last().unwrap_or("");
+        let line: serde_json::Value =
+            serde_json::from_str(last).unwrap_or_else(|e| panic!("{e}: {last}"));
+        assert_eq!(line["layer"], "registry", "{last}");
+        assert_eq!(line["rule"], "REG-COOLDOWN", "{last}");
+        assert_eq!(line["target"], "pkg@2.0.0 hidden", "{last}");
+        assert_eq!(line["verdict"], "note", "{last}");
+        assert_eq!(line["policy_hash"], "hash-1", "{last}");
     }
 
     #[test]
