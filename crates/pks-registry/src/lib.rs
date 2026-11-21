@@ -9,3 +9,4 @@ pub mod document;
 pub mod integrity;
 pub mod names;
 pub mod typosquat;
+pub mod upstream;
