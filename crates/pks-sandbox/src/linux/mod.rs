@@ -1,6 +1,7 @@
 //! The Linux backend (PRD §6.1): bubblewrap, a nested Xephyr display, Landlock
 //! and a seccomp filter. No root is needed at runtime.
 
+pub mod broker;
 pub mod bwrap;
 pub mod display;
 pub mod init;
