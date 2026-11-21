@@ -134,6 +134,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-21 | **pip through the mirror (verified).** pip 24.0 inside the sandbox installs `requests==2.34.2` through the mirror from the real PyPI. Found by the test: pip asks for `<wheel>.metadata` (PEP 658) before the wheel. The mirror now serves it with the same cooldown and malware checks as the wheel, and verifies it against the sha256 the index gives for it (`core-metadata` or `data-dist-info-metadata`). A file with no published checksum is refused (REG-INTEGRITY). One run timed out after pip's 15-second read limit, and the next run passed; the cause is not known yet and is a watch item. | Real pip, 2026-11-21. |
 
+| 2026-11-21 | **False-positive benchmark, top 1,000 packages of each registry (PRD Phase 14 done-when).** Run with `cargo run --release -p pks-registry --example false_positives` against the live registries, on 2026-11-21 (unix time 1795299984). npm: 1,000 checked, 0 unreadable, 0 refused as too new, 79 with a version hidden by the 72-hour cooldown (the install resolves an older version), 29 with an install script in a visible version (not run, because `npm_config_ignore_scripts` is on). PyPI: 1,000 checked, 0 unreadable, 0 refused as too new, 189 with a hidden file. Typosquat warnings in this sample: 0, because a name in the reference list is exempt. The rate that matters is the leave-one-out count for names outside the list: 42 npm and 47 PyPI names of the top 1,000 would warn if they were not in the list (recorded in the typosquat tests). Known cost: packages with install scripts may need a manual step. | Live run, 2026-11-21. |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |

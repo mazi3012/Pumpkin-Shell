@@ -23,7 +23,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 11 | Notifications and review | T9 | Linux | | done (PR #11 merged; done-when checked with VS Code 2026-11-21, Kiro run pending; 11.4 deferred, DECISIONS Q7) |
 | 12 | Brokers | T10 | Linux | | done (PR #12 merged; Kiro sign-in and git push checked by hand 2026-11-21; Windows CI green) |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
-| 14 | npm and PyPI mirror | T12 | Linux | | in-progress (branch `phase-14-registry-guard`; needs a TLS decision, see DECISIONS) |
+| 14 | npm and PyPI mirror | T12 | Linux | | in-progress (branch `phase-14-registry-guard`; npm and pip checked through the mirror with the real registries; benchmark recorded; scenario 5 and uv, poetry, pnpm, yarn, bun not verified) |
 | 15 | Linux exec/connect auditing | T13 | Linux | | todo |
 | 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
