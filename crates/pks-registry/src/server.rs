@@ -8,8 +8,8 @@
 
 use std::io::{self, Read, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::mirror::{Mirror, Reply, Source};
@@ -27,18 +27,25 @@ pub type Record = Arc<dyn Fn(&str) + Send + Sync>;
 ///
 /// # Errors
 /// Fails when the listener cannot be set up or stops accepting.
-pub fn serve<S: Source>(
+pub fn serve<S: Source + 'static>(
     listener: UnixListener,
     mirror: Arc<Mirror<S>>,
     record: Record,
     stop: Arc<AtomicBool>,
 ) -> io::Result<()> {
     listener.set_nonblocking(true)?;
+    // Each connection is read in its own thread, so a client that sends
+    // nothing cannot hold up the others. The answers still come one at a time.
+    let turn = Arc::new(Mutex::new(()));
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
             Ok((stream, _)) => {
                 let _ = stream.set_nonblocking(false);
-                let _ = answer(stream, &mirror, &record);
+                let (mirror, record, turn) =
+                    (Arc::clone(&mirror), Arc::clone(&record), Arc::clone(&turn));
+                std::thread::spawn(move || {
+                    let _ = answer(stream, &mirror, &record, &turn);
+                });
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(50));
@@ -116,6 +123,7 @@ fn answer<S: Source>(
     mut stream: UnixStream,
     mirror: &Mirror<S>,
     record: &Record,
+    turn: &Mutex<()>,
 ) -> io::Result<()> {
     stream.set_read_timeout(Some(READ_TIMEOUT))?;
     let Some(head) = read_head(&mut stream)? else {
@@ -137,7 +145,12 @@ fn answer<S: Source>(
     if !target_ok(target) {
         return plain(&mut stream, 400, "the request target is not allowed");
     }
-    let reply = mirror.handle(target);
+    // The upstream runtime is single-threaded, so only one request is worked
+    // on at a time. A poisoned lock is still usable: the guard holds no data.
+    let reply = {
+        let _turn = turn.lock().unwrap_or_else(PoisonError::into_inner);
+        mirror.handle(target)
+    };
     for note in &reply.notes {
         record(note);
     }
@@ -264,6 +277,25 @@ mod tests {
                 .any(|n| n.starts_with("REG-COOLDOWN pkg@2.0.0")),
             "{recorded:?}"
         );
+        stop.store(true, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[test]
+    fn a_client_that_sends_nothing_does_not_hold_up_the_next_request()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (dir, stop, _) = start()?;
+        // Connects and never sends a request, as the relay's readiness probe does.
+        let idle = UnixStream::connect(dir.path().join("mirror.sock"))?;
+        let started = std::time::Instant::now();
+        let (status, _) = ask(&dir, b"GET /npm/pkg HTTP/1.1\r\nHost: x\r\n\r\n")?;
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the request waited {:?} behind an idle client",
+            started.elapsed()
+        );
+        drop(idle);
         stop.store(true, Ordering::Relaxed);
         Ok(())
     }

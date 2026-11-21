@@ -9,7 +9,7 @@
 //!   own protocol to `127.0.0.1:<port>` and has no idea about the proxy, so
 //!   the relay sends `CONNECT 127.0.0.1:<port>` itself before copying bytes.
 use std::io::{self, Read, Write};
-use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::net::{Ipv4Addr, Shutdown, SocketAddr, TcpListener, TcpStream};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -120,6 +120,9 @@ pub(crate) fn pipe(tcp: TcpStream, unix: UnixStream) {
     };
     let up = thread::spawn(move || {
         let _ = io::copy(&mut tcp_read, &mut unix_write);
+        // The client has finished sending. Tell the far end, so it does not
+        // wait for bytes that will never come.
+        let _ = unix_write.shutdown(Shutdown::Write);
     });
     let _ = io::copy(&mut unix_read, &mut tcp_write);
     let _ = up.join();
@@ -134,6 +137,23 @@ pub fn listen_address() -> SocketAddr {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn when_the_client_closes_the_far_end_sees_end_of_stream()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let listener = TcpListener::bind(loopback(0))?;
+        let client = TcpStream::connect(listener.local_addr()?)?;
+        let (inside, _) = listener.accept()?;
+        let (relay_end, far_end) = UnixStream::pair()?;
+        thread::spawn(move || pipe(inside, relay_end));
+        // The client gives up without sending anything, as a readiness probe does.
+        drop(client);
+        far_end.set_read_timeout(Some(std::time::Duration::from_secs(5)))?;
+        let mut byte = [0u8; 1];
+        let read = (&far_end).read(&mut byte)?;
+        assert_eq!(read, 0, "the far end was left waiting for bytes");
+        Ok(())
+    }
 
     #[test]
     fn the_relay_refuses_a_non_loopback_address() {
