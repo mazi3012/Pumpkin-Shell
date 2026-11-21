@@ -442,6 +442,7 @@ dependencies = [
  "landlock",
  "libc",
  "pks-core",
+ "pks-detect",
  "pks-proxy",
  "pks-sandbox",
  "pks-scan",
@@ -462,6 +463,16 @@ dependencies = [
  "tempfile",
  "thiserror",
  "toml",
+]
+
+[[package]]
+name = "pks-detect"
+version = "0.0.0"
+dependencies = [
+ "pks-core",
+ "serde",
+ "serde_json",
+ "tempfile",
 ]
 
 [[package]]

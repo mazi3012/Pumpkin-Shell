@@ -5,7 +5,9 @@ mod ide;
 mod log;
 mod policy;
 mod restore;
+mod review;
 mod scan;
+mod watch;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
@@ -101,6 +103,39 @@ enum Command {
         #[arg(long)]
         into: Option<PathBuf>,
     },
+    /// Watch a running session for findings (WARN and above).
+    Watch {
+        /// The session id to watch.
+        #[arg(long)]
+        session: Option<String>,
+    },
+    /// Resume a paused session.
+    Resume {
+        /// The session id to resume.
+        session: String,
+    },
+    /// Kill a running session.
+    Kill {
+        /// The session id to kill.
+        session: String,
+    },
+    /// Review staged writes and approve or reject them.
+    Review {
+        /// The session id to review.
+        session: String,
+    },
+    /// Allow a domain in the policy.
+    Allow {
+        /// Domain to allow (host:port).
+        domain: String,
+    },
+    /// Approve one staged write of a session: copy it into the repo.
+    AllowWrite {
+        /// The session id printed by `ide`.
+        session: String,
+        /// Path from the repo root, as listed by `review`.
+        path: String,
+    },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
     Trust {
         /// Repository whose pumpkin-shell.toml to pin.
@@ -195,6 +230,12 @@ fn main() -> ExitCode {
             host_port,
         }) => ide::sandbox_relay(listen, &socket, &host_port),
         Some(Command::Restore { session, into }) => restore::run(&session, into.as_deref()),
+        Some(Command::Watch { session }) => watch::run(session.as_deref()),
+        Some(Command::Resume { session }) => watch::resume(&session),
+        Some(Command::Kill { session }) => watch::kill(&session),
+        Some(Command::Review { session }) => review::run(&session),
+        Some(Command::Allow { domain }) => policy::allow_domain(&domain),
+        Some(Command::AllowWrite { session, path }) => review::allow_write(&session, &path),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

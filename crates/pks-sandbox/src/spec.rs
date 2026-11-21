@@ -71,6 +71,11 @@ pub struct LaunchSpec {
     pub host_ports: Vec<u16>,
     /// Paths bound over parts of the repo, parents before what is under them.
     pub binds: Vec<Bind>,
+    /// Where the backend writes the sandbox's process ID once it has started,
+    /// and removes again when it exits. The sandbox is its own process group
+    /// (bubblewrap runs with `--new-session`), so pausing and killing the
+    /// session signal that group. `None` writes nothing.
+    pub pid_file: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -309,6 +314,7 @@ mod tests {
                 proxy_socket: proxy.clone(),
                 host_ports: Vec::new(),
                 binds: Vec::new(),
+                pid_file: None,
             };
             Ok(Self { _dir: dir, spec })
         }
