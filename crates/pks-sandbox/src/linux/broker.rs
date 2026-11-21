@@ -29,11 +29,25 @@ pub enum Request {
     Push { remote: String, branch: String },
 }
 
+/// The user's answer to a request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    /// Perform the action (open the page, push the branch).
+    Allow,
+    /// Copy the link to the host's clipboard instead of opening it. Only
+    /// offered for `open`.
+    CopyOnly,
+    /// Do nothing.
+    Deny,
+}
+
 /// What the host does with a request. The CLI implements this with a real
 /// prompt and real programs; tests implement it with fakes.
 pub trait Handler {
-    /// Asks the user. `true` only when the user agreed.
-    fn approve(&self, request: &Request) -> bool;
+    /// Asks the user.
+    fn approve(&self, request: &Request) -> Decision;
+    /// Copies the URL to the host's clipboard.
+    fn copy_url(&self, url: &str) -> Result<(), String>;
     /// Opens the URL in the host's browser.
     fn open_url(&self, url: &str) -> Result<(), String>;
     /// Pushes the branch to the remote in the repo.
@@ -122,15 +136,18 @@ pub fn respond(line: &str, handler: &dyn Handler) -> String {
         Ok(request) => request,
         Err(reason) => return format!("error\t{reason}"),
     };
-    if !handler.approve(&request) {
-        return "denied\tthe user did not approve it".to_owned();
-    }
-    let result = match &request {
-        Request::Open { url } => handler.open_url(url),
-        Request::Push { remote, branch } => handler.push(remote, branch),
+    let (result, done) = match (handler.approve(&request), &request) {
+        (Decision::Deny, _) | (Decision::CopyOnly, Request::Push { .. }) => {
+            return "denied\tthe user did not approve it".to_owned();
+        }
+        (Decision::CopyOnly, Request::Open { url }) => (handler.copy_url(url), "copied"),
+        (Decision::Allow, Request::Open { url }) => (handler.open_url(url), "done"),
+        (Decision::Allow, Request::Push { remote, branch }) => {
+            (handler.push(remote, branch), "done")
+        }
     };
     match result {
-        Ok(()) => "ok\tdone".to_owned(),
+        Ok(()) => format!("ok\t{done}"),
         Err(reason) => format!("error\t{reason}"),
     }
 }
@@ -274,9 +291,17 @@ mod tests {
     }
 
     impl Handler for Fake {
-        fn approve(&self, request: &Request) -> bool {
+        fn approve(&self, request: &Request) -> Decision {
             self.calls.borrow_mut().push(format!("approve {request:?}"));
-            self.allow
+            if self.allow {
+                Decision::Allow
+            } else {
+                Decision::Deny
+            }
+        }
+        fn copy_url(&self, url: &str) -> Result<(), String> {
+            self.calls.borrow_mut().push(format!("copy {url}"));
+            Ok(())
         }
         fn open_url(&self, url: &str) -> Result<(), String> {
             self.calls.borrow_mut().push(format!("open {url}"));
@@ -396,8 +421,11 @@ mod tests {
     /// `Fake` without interior mutability, so it can be shared across threads.
     struct FakeSync;
     impl Handler for FakeSync {
-        fn approve(&self, _: &Request) -> bool {
-            true
+        fn approve(&self, _: &Request) -> Decision {
+            Decision::Allow
+        }
+        fn copy_url(&self, _: &str) -> Result<(), String> {
+            Ok(())
         }
         fn open_url(&self, _: &str) -> Result<(), String> {
             Ok(())

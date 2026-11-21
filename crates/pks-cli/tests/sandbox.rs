@@ -844,8 +844,18 @@ struct Recorder {
 }
 
 impl pks_sandbox::linux::broker::Handler for Recorder {
-    fn approve(&self, _request: &pks_sandbox::linux::broker::Request) -> bool {
-        true
+    fn approve(
+        &self,
+        _request: &pks_sandbox::linux::broker::Request,
+    ) -> pks_sandbox::linux::broker::Decision {
+        pks_sandbox::linux::broker::Decision::Allow
+    }
+    fn copy_url(&self, url: &str) -> Result<(), String> {
+        self.calls
+            .lock()
+            .map_err(|e| e.to_string())?
+            .push(format!("copy {url}"));
+        Ok(())
     }
     fn open_url(&self, url: &str) -> Result<(), String> {
         self.calls
