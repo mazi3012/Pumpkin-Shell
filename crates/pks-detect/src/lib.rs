@@ -4,7 +4,7 @@
 //! - INFO/NOTICE → log and session summary
 //! - WARN → `pumpkin-shell watch`
 //! - HIGH → desktop notification (`notify-send`)
-//! - CRITICAL → also webhook plus configured action (default: pause)
+//! - CRITICAL → desktop notification and pause (webhook output deferred, DECISIONS Q7)
 
 pub mod notify;
 pub mod session;

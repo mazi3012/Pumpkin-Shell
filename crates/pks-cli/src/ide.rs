@@ -173,9 +173,33 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
             }
         })
     };
+    let poll_thread = {
+        let stop = std::sync::Arc::clone(&stop_watch);
+        let log = std::sync::Arc::clone(&session.log);
+        let policy_hash = session.policy_hash.clone();
+        let notifier = std::sync::Arc::clone(&session.notifier);
+        let session_dir = session.dir.clone();
+        let staging = session.staging_handle();
+        std::thread::spawn(move || {
+            let Some(staging) = staging else { return };
+            let mut reported: std::collections::HashSet<(String, String)> =
+                std::collections::HashSet::new();
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                std::thread::sleep(STAGING_POLL);
+                for finding in live_findings(&staging) {
+                    let key = (finding.rule.as_str().to_owned(), finding.target.clone());
+                    if reported.insert(key) {
+                        emit(&log, &policy_hash, &finding, "staged");
+                        route(&notifier, &session_dir, &finding);
+                    }
+                }
+            }
+        })
+    };
     let result = backend.run(&spec);
     stop_watch.store(true, std::sync::atomic::Ordering::Relaxed);
     let _ = watch_thread.join();
+    let _ = poll_thread.join();
     session.check_workspace(repo);
     session.close();
     match result {
@@ -209,7 +233,7 @@ struct Session {
     policy_hash: String,
     /// The staged protected paths. Dropping it removes the mount points that
     /// were made in the repo, so every way out of a session cleans up.
-    staging: Option<pks_core::workspace::Staging>,
+    staging: Option<std::sync::Arc<pks_core::workspace::Staging>>,
     socket: PathBuf,
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
@@ -261,13 +285,11 @@ impl Session {
         let logger = Logger::create(&dir.join("session.jsonl"), key, &id)
             .map_err(|e| format!("cannot open the session log: {e}"))?;
         let log = Arc::new(Mutex::new(Some(logger)));
-        // Desktop notifications are on for every session. No webhook is
-        // configured yet, so CRITICAL findings only pause the session.
+        // Desktop notifications are on for every session. Webhook output is
+        // deferred (DECISIONS Q7), so CRITICAL findings only pause the session.
         let notifier = Arc::new(pks_detect::Notifier::new(
             dir.clone(),
-            id.clone(),
             true,
-            None,
             Arc::new(AtomicBool::new(false)),
         ));
         let socket = dir.join("proxy.sock");
@@ -323,13 +345,18 @@ impl Session {
             id,
             dir,
             policy_hash: session_policy_hash,
-            staging: Some(staging),
+            staging: Some(std::sync::Arc::new(staging)),
             socket,
             stop,
             server: Some(server),
             log,
             notifier,
         })
+    }
+
+    /// A shared handle to the staging, for the live check while the IDE runs.
+    fn staging_handle(&self) -> Option<std::sync::Arc<pks_core::workspace::Staging>> {
+        self.staging.clone()
     }
 
     /// The staged protected paths, as binds for the sandbox.
@@ -360,8 +387,14 @@ impl Session {
     fn check_workspace(&mut self, repo: &Path) {
         if let Some(staging) = self.staging.take() {
             // Checks the sandbox's writes to protected paths, then ends the staging.
-            for finding in pks_scan::staged::review(staging) {
-                self.report(&finding, "staged");
+            // The live thread has been joined, so this is the last handle.
+            match std::sync::Arc::try_unwrap(staging) {
+                Ok(staging) => {
+                    for finding in pks_scan::staged::review(staging) {
+                        self.report(&finding, "staged");
+                    }
+                }
+                Err(_) => eprintln!("ide: the staged writes could not be checked: still in use"),
             }
         }
         // Secrets the sandbox wrote into the repo (values are never printed).
@@ -413,6 +446,32 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+/// How often the staged copies are checked while the IDE runs.
+#[cfg(target_os = "linux")]
+const STAGING_POLL: std::time::Duration = std::time::Duration::from_millis(500);
+
+/// Config findings in the staged copies the sandbox has changed so far. Only
+/// the config rules run live, because they are the ones that must pause the
+/// session at once (WS-AUTOAPPROVE). The full review still runs when the IDE
+/// exits. A file that is still being written may not parse yet; it is checked
+/// again on the next pass.
+#[cfg(target_os = "linux")]
+fn live_findings(staging: &pks_core::workspace::Staging) -> Vec<pks_core::Finding> {
+    let Ok(files) = staging.changed_files() else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for file in files {
+        let Ok(text) = std::fs::read_to_string(&file.staged) else {
+            continue;
+        };
+        if let Some(Ok(findings)) = pks_scan::staged::config_findings(&file.rel, &text) {
+            out.extend(findings);
+        }
+    }
+    out
 }
 
 /// Routes a finding by severity (PRD FR-NOTIFY). A CRITICAL finding pauses
@@ -564,6 +623,42 @@ mod tests {
         let text = String::from_utf8_lossy(&output);
         assert!(text.contains("unknown.example.org:443"), "{text}");
         assert!(text.contains("default deny"), "{text}");
+    }
+
+    /// PRD scenario 3, while the IDE runs: the sandbox turns on auto-approve in
+    /// a staged copy. The live check reports it as CRITICAL, and the repo is
+    /// not changed.
+    #[test]
+    fn a_staged_auto_approve_switch_is_critical_while_the_ide_runs()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let root = tempfile::tempdir()?;
+        let repo = root.path().join("repo");
+        let session = root.path().join("session");
+        std::fs::create_dir_all(repo.join(".vscode"))?;
+        std::fs::write(repo.join(".vscode/settings.json"), "{}\n")?;
+        std::fs::create_dir_all(&session)?;
+        let staging = pks_core::workspace::prepare(&repo, &session)?;
+
+        assert!(
+            live_findings(&staging).is_empty(),
+            "nothing has been written yet"
+        );
+
+        std::fs::write(
+            session.join("staging/.vscode/settings.json"),
+            "{\"chat.tools.autoApprove\": true}\n",
+        )?;
+        let findings = live_findings(&staging);
+        assert!(
+            findings.iter().any(|f| f.rule.as_str() == "WS-AUTOAPPROVE"
+                && f.severity == pks_core::Severity::Critical),
+            "{findings:?}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(repo.join(".vscode/settings.json"))?,
+            "{}\n"
+        );
+        Ok(())
     }
 }
 

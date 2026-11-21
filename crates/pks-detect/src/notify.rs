@@ -3,13 +3,13 @@
 //! - INFO/NOTICE → log only
 //! - WARN → watch output
 //! - HIGH → desktop notification (`notify-send`)
-//! - CRITICAL → webhook + configured action (pause)
+//! - CRITICAL → desktop notification + pause (webhook output is deferred, DECISIONS Q7)
 
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use pks_core::{Finding, Severity};
 
@@ -40,12 +40,8 @@ impl NotifyState {
 pub struct Notifier {
     /// Path to the session directory (for watch output).
     session_dir: PathBuf,
-    /// Session ID for watch output.
-    session_id: String,
     /// Whether desktop notifications are enabled.
     desktop: bool,
-    /// Webhook URL for CRITICAL findings (optional).
-    webhook: Option<String>,
     /// Pause flag for CRITICAL findings.
     pause_flag: std::sync::Arc<AtomicBool>,
     /// Deduplication state.
@@ -58,16 +54,12 @@ impl Notifier {
     /// Creates a new notifier for the given session.
     pub fn new(
         session_dir: PathBuf,
-        session_id: String,
         desktop: bool,
-        webhook: Option<String>,
         pause_flag: std::sync::Arc<AtomicBool>,
     ) -> Self {
         Self {
             session_dir,
-            session_id,
             desktop,
-            webhook,
             pause_flag,
             state: Mutex::new(NotifyState::new()),
             last_desktop: AtomicU64::new(0),
@@ -116,14 +108,9 @@ impl Notifier {
                 }
             }
             Severity::Critical => {
-                // CRITICAL → webhook + action
-                if should_show_desktop {
-                    if self.desktop {
-                        self.show_desktop(finding);
-                    }
-                    if let Some(url) = &self.webhook {
-                        self.send_webhook(url, finding);
-                    }
+                // CRITICAL → desktop notification, then the pause.
+                if should_show_desktop && self.desktop {
+                    self.show_desktop(finding);
                 }
                 // Signal pause.
                 self.pause_flag.store(true, Ordering::Release);
@@ -177,29 +164,6 @@ impl Notifier {
         }
     }
 
-    /// Sends a webhook notification.
-    fn send_webhook(&self, url: &str, finding: &Finding) {
-        let payload = serde_json::json!({
-            "session": self.session_id,
-            "rule": finding.rule.as_str(),
-            "severity": format!("{:?}", finding.severity),
-            "target": finding.target,
-            "message": finding.message,
-            "fix": finding.fix,
-        });
-
-        // Try to send the webhook (non-blocking, best effort).
-        let url = url.to_string();
-        std::thread::spawn(move || {
-            let client = reqwest::blocking::Client::new();
-            let _ = client
-                .post(&url)
-                .json(&payload)
-                .timeout(Duration::from_secs(5))
-                .send();
-        });
-    }
-
     /// Clears the pause flag.
     pub fn clear_pause(&self) {
         self.pause_flag.store(false, Ordering::Release);
@@ -250,9 +214,7 @@ mod tests {
         let pause_flag = std::sync::Arc::new(AtomicBool::new(false));
         let notifier = Notifier::new(
             temp.path().to_path_buf(),
-            "test-session".to_string(),
             false,
-            None,
             std::sync::Arc::clone(&pause_flag),
         );
         let finding = test_finding(Severity::Critical);
@@ -265,13 +227,7 @@ mod tests {
     fn high_returns_false_for_pause() {
         let temp = tempfile::tempdir().unwrap();
         let pause_flag = std::sync::Arc::new(AtomicBool::new(false));
-        let notifier = Notifier::new(
-            temp.path().to_path_buf(),
-            "test-session".to_string(),
-            false,
-            None,
-            pause_flag,
-        );
+        let notifier = Notifier::new(temp.path().to_path_buf(), false, pause_flag);
         let finding = test_finding(Severity::High);
         let should_pause = notifier.notify(&finding);
         assert!(!should_pause);
