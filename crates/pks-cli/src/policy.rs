@@ -1,12 +1,14 @@
-//! `pumpkin-shell trust` and `pumpkin-shell policy check`.
+//! `pumpkin-shell trust`, `pumpkin-shell allow`, `pumpkin-shell allow-write`,
+//! and `pumpkin-shell policy check`.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use pks_core::Finding;
+use pks_core::net::HostPort;
 use pks_core::paths::{self, process_env};
 use pks_core::policy::{
-    self, Effective, PolicyFile, REPO_POLICY_FILE, RepoOutcome, RepoPolicyFile,
+    self, Effective, PolicyFile, REPO_POLICY_FILE, RepoOutcome, RepoPolicyFile, USER_POLICY_FILE,
 };
 use pks_core::trust::{TrustState, TrustStore};
 
@@ -140,4 +142,104 @@ pub fn check(repo: &Path) -> ExitCode {
     } else {
         ExitCode::from(EXIT_FINDINGS)
     }
+}
+
+/// `pumpkin-shell allow <domain>`: adds a domain to the user policy.
+pub fn allow_domain(domain: &str) -> ExitCode {
+    let dirs = match dirs() {
+        Ok(dirs) => dirs,
+        Err(message) => return fail(message),
+    };
+
+    // Parse the domain as a host:port endpoint.
+    let endpoint = match HostPort::parse(domain) {
+        Ok(ep) => ep,
+        Err(e) => {
+            eprintln!("allow: invalid domain '{domain}': {e}");
+            return ExitCode::from(EXIT_ERROR);
+        }
+    };
+
+    // Read the existing user policy, or start from defaults.
+    let mut user = match load_user_policy(&dirs.config) {
+        Ok(user) => user,
+        Err(message) => return fail(&message),
+    };
+
+    // Add the endpoint if not already present.
+    if user.allow.contains(&endpoint) {
+        println!("allow: {endpoint} is already in the policy");
+        return ExitCode::SUCCESS;
+    }
+    user.allow.insert(endpoint.clone());
+
+    // Write the policy back.
+    let path = dirs.config.join(USER_POLICY_FILE);
+    if let Err(e) = write_user_policy(&path, &user) {
+        return fail(&format!("cannot write policy: {e}"));
+    }
+
+    println!("allow: added {endpoint} to {}", path.display());
+    ExitCode::SUCCESS
+}
+
+/// `pumpkin-shell allow-write <path>`: adds a write path to the user policy.
+///
+/// Note: This is a placeholder. Write allowlists are not yet implemented
+/// in the policy schema (Phase 10/11). For now, this just prints a message.
+pub fn allow_write(path: &str) -> ExitCode {
+    // Phase 11 TODO: Implement write allowlist in the policy schema.
+    // For now, this command exists but the feature is not yet wired up.
+    eprintln!("allow-write: path '{path}' noted.");
+    eprintln!(
+        "Note: Write allowlists are not yet enforced. This command will be fully implemented in a later phase."
+    );
+    ExitCode::SUCCESS
+}
+
+/// Writes a user policy to disk as TOML.
+fn write_user_policy(path: &Path, policy: &PolicyFile) -> Result<(), String> {
+    // Ensure the parent directory exists.
+    if let Some(parent) = path.parent()
+        && !parent.exists()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        return Err(format!("cannot create {}: {e}", parent.display()));
+    }
+
+    // Build the TOML representation.
+    let mut lines = vec!["version = 1".to_owned()];
+    if let Some(mode) = &policy.mode {
+        lines.push(format!("mode = \"{}\"", mode.as_str()));
+    }
+    if !policy.allow.is_empty() {
+        lines.push("[network]".to_owned());
+        lines.push("allow = [".to_owned());
+        for endpoint in &policy.allow {
+            lines.push(format!("  \"{}\",", endpoint));
+        }
+        lines.push("]".to_owned());
+    }
+    if !policy.host_ports.is_empty() {
+        if !policy.allow.is_empty() {
+            // network section already open
+        } else {
+            lines.push("[network]".to_owned());
+        }
+        let ports: Vec<String> = policy.host_ports.iter().map(|p| p.to_string()).collect();
+        lines.push(format!("host_ports = [{}]", ports.join(", ")));
+    }
+    if !policy.rules.is_empty() {
+        lines.push("[rules]".to_owned());
+        for (id, action) in &policy.rules {
+            lines.push(format!(
+                "\"{}\" = {{ action = \"{}\" }}",
+                id.as_str(),
+                action.as_str()
+            ));
+        }
+    }
+
+    let content = lines.join("\n") + "\n";
+    std::fs::write(path, content).map_err(|e| format!("cannot write {}: {e}", path.display()))
 }

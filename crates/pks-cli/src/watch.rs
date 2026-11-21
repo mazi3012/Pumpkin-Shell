@@ -1,16 +1,14 @@
-//! `pumpkin-shell watch`: monitor a running session for findings.
+//! `pumpkin-shell watch`, `resume` and `kill`: follow and control a session.
 //!
-//! Phase 11: WARN and above are written to the watch file.
-
-// Allow unsafe for libc::kill calls (SIGCONT, SIGKILL).
-#![allow(unsafe_code)]
+//! WARN and above are written to the session's watch file. A CRITICAL finding
+//! pauses the sandbox until `resume` or `kill` (PRD FR-NOTIFY).
 
 use std::process::ExitCode;
 
 use pks_core::paths::data_dir;
 use serde::Deserialize;
 
-/// Exit code for a session not found.
+/// Exit code for a session that cannot be found or controlled.
 const EXIT_NOT_FOUND: u8 = 2;
 
 /// A finding entry in the watch file.
@@ -109,55 +107,43 @@ pub fn run(session: Option<&str>) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-/// Resumes a paused session (Linux only).
+/// Looks up a session and its running sandbox's process ID. Prints why and
+/// returns `None` when either is missing.
+#[cfg(target_os = "linux")]
+fn find_running(command: &str, session: &str) -> Option<(pks_detect::SessionInfo, i32)> {
+    let data = data_dir(&pks_core::paths::process_env).or_else(|| {
+        eprintln!("{command}: cannot find the data directory");
+        None
+    })?;
+    let Some(info) = pks_detect::SessionInfo::find(&data, session) else {
+        eprintln!("{command}: session {session} not found");
+        return None;
+    };
+    let Some(pid) = pks_detect::read_pid(&info.dir) else {
+        eprintln!("{command}: session {session} is not running");
+        return None;
+    };
+    Some((info, pid))
+}
+
+/// Resumes a paused session (Linux only): SIGCONT to its process group.
 #[cfg(target_os = "linux")]
 pub fn resume(session: &str) -> ExitCode {
-    let data = match data_dir(&pks_core::paths::process_env) {
-        Some(d) => d,
-        None => {
-            eprintln!("resume: cannot find the data directory");
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
-    };
+    use pks_sandbox::linux::signal::{Signal, signal_tree};
 
-    let info = match pks_detect::SessionInfo::find(&data, session) {
-        Some(i) => i,
-        None => {
-            eprintln!("resume: session {} not found", session);
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
+    let Some((info, pid)) = find_running("resume", session) else {
+        return ExitCode::from(EXIT_NOT_FOUND);
     };
-
-    // Send SIGCONT to the paused IDE process.
-    // The pause file contains the PID.
-    let pause_file = info.dir.join("pause.pid");
-    let pid: i32 = match std::fs::read_to_string(&pause_file) {
-        Ok(content) => content.trim().parse().unwrap_or(0),
-        Err(_) => {
-            eprintln!("resume: no paused session found");
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
-    };
-
-    if pid <= 0 {
-        eprintln!("resume: invalid PID");
+    if !info.paused.exists() {
+        eprintln!("resume: session {session} is not paused");
         return ExitCode::from(EXIT_NOT_FOUND);
     }
-
-    // Send SIGCONT.
-    let result = unsafe { libc::kill(pid, libc::SIGCONT) };
-    if result < 0 {
-        eprintln!(
-            "resume: could not send SIGCONT: {}",
-            std::io::Error::last_os_error()
-        );
+    if let Err(error) = signal_tree(pid, Signal::Continue) {
+        eprintln!("resume: could not send SIGCONT: {error}");
         return ExitCode::from(EXIT_NOT_FOUND);
     }
-
-    // Remove the pause file.
-    let _ = std::fs::remove_file(&pause_file);
-
-    eprintln!("resume: session {} resumed", session);
+    let _ = std::fs::remove_file(&info.paused);
+    eprintln!("resume: session {session} resumed");
     ExitCode::SUCCESS
 }
 
@@ -168,54 +154,21 @@ pub fn resume(_session: &str) -> ExitCode {
     ExitCode::from(EXIT_NOT_FOUND)
 }
 
-/// Kills a running session (Linux only).
+/// Kills a running session (Linux only): SIGKILL to its process group. A
+/// paused session is killed the same way.
 #[cfg(target_os = "linux")]
 pub fn kill(session: &str) -> ExitCode {
-    let data = match data_dir(&pks_core::paths::process_env) {
-        Some(d) => d,
-        None => {
-            eprintln!("kill: cannot find the data directory");
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
-    };
+    use pks_sandbox::linux::signal::{Signal, signal_tree};
 
-    let info = match pks_detect::SessionInfo::find(&data, session) {
-        Some(i) => i,
-        None => {
-            eprintln!("kill: session {} not found", session);
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
+    let Some((info, pid)) = find_running("kill", session) else {
+        return ExitCode::from(EXIT_NOT_FOUND);
     };
-
-    // The pause file contains the PID.
-    let pause_file = info.dir.join("pause.pid");
-    let pid: i32 = match std::fs::read_to_string(&pause_file) {
-        Ok(content) => content.trim().parse().unwrap_or(0),
-        Err(_) => {
-            eprintln!("kill: no session found");
-            return ExitCode::from(EXIT_NOT_FOUND);
-        }
-    };
-
-    if pid <= 0 {
-        eprintln!("kill: invalid PID");
+    if let Err(error) = signal_tree(pid, Signal::Kill) {
+        eprintln!("kill: could not send SIGKILL: {error}");
         return ExitCode::from(EXIT_NOT_FOUND);
     }
-
-    // Send SIGKILL.
-    let result = unsafe { libc::kill(pid, libc::SIGKILL) };
-    if result < 0 {
-        eprintln!(
-            "kill: could not send SIGKILL: {}",
-            std::io::Error::last_os_error()
-        );
-        return ExitCode::from(EXIT_NOT_FOUND);
-    }
-
-    // Remove the pause file.
-    let _ = std::fs::remove_file(&pause_file);
-
-    eprintln!("kill: session {} killed", session);
+    let _ = std::fs::remove_file(&info.paused);
+    eprintln!("kill: session {session} killed");
     ExitCode::SUCCESS
 }
 

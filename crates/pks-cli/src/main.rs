@@ -124,6 +124,16 @@ enum Command {
         /// The session id to review.
         session: String,
     },
+    /// Allow a domain in the policy.
+    Allow {
+        /// Domain to allow (host:port).
+        domain: String,
+    },
+    /// Allow writes to a path in the policy.
+    AllowWrite {
+        /// Path pattern to allow.
+        path: String,
+    },
     /// Pin the repo's pumpkin-shell.toml so it is applied. Run it again after any edit.
     Trust {
         /// Repository whose pumpkin-shell.toml to pin.
@@ -222,6 +232,8 @@ fn main() -> ExitCode {
         Some(Command::Resume { session }) => watch::resume(&session),
         Some(Command::Kill { session }) => watch::kill(&session),
         Some(Command::Review { session }) => review::run(&session),
+        Some(Command::Allow { domain }) => policy::allow_domain(&domain),
+        Some(Command::AllowWrite { path }) => policy::allow_write(&path),
         Some(Command::Trust { path }) => policy::trust(&path),
         Some(Command::Policy {
             command: PolicyCommand::Check { path },

@@ -10,4 +10,4 @@ pub mod notify;
 pub mod session;
 
 pub use notify::Notifier;
-pub use session::SessionInfo;
+pub use session::{read_pid, SessionInfo, PAUSED_FILE, PID_FILE};

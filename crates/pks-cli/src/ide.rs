@@ -122,6 +122,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         proxy_socket: session.socket.clone(),
         host_ports: effective.host_ports.iter().copied().collect(),
         binds: session.binds(),
+        pid_file: Some(session.dir.join(pks_detect::PID_FILE)),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -143,6 +144,8 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         let stop = std::sync::Arc::clone(&stop_watch);
         let log = std::sync::Arc::clone(&session.log);
         let policy_hash = session.policy_hash.clone();
+        let notifier = std::sync::Arc::clone(&session.notifier);
+        let session_dir = session.dir.clone();
         let names: Vec<(PathBuf, &'static str)> =
             decoys.iter().map(|d| (d.path.clone(), d.name)).collect();
         std::thread::spawn(move || {
@@ -158,6 +161,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
                                 reported.push(name);
                                 let finding = pks_core::decoy::read_finding(name);
                                 emit(&log, &policy_hash, &finding, "alert");
+                                route(&notifier, &session_dir, &finding);
                             }
                         }
                     }
@@ -210,6 +214,8 @@ struct Session {
     stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
     server: Option<std::thread::JoinHandle<()>>,
     log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
+    /// Severity routing and desktop notifications (PRD FR-NOTIFY).
+    notifier: std::sync::Arc<pks_detect::Notifier>,
 }
 
 #[cfg(target_os = "linux")]
@@ -246,6 +252,15 @@ impl Session {
         let logger = Logger::create(&dir.join("session.jsonl"), key, &id)
             .map_err(|e| format!("cannot open the session log: {e}"))?;
         let log = Arc::new(Mutex::new(Some(logger)));
+        // Desktop notifications are on for every session. No webhook is
+        // configured yet, so CRITICAL findings only pause the session.
+        let notifier = Arc::new(pks_detect::Notifier::new(
+            dir.clone(),
+            id.clone(),
+            true,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        ));
         let socket = dir.join("proxy.sock");
         let listener = UnixListener::bind(&socket)
             .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
@@ -253,6 +268,8 @@ impl Session {
         let policy_hash = effective.hash();
         let session_policy_hash = policy_hash.clone();
         let sink_log = Arc::clone(&log);
+        let sink_notifier = Arc::clone(&notifier);
+        let sink_dir = dir.clone();
         let events: pks_proxy::EventSink = Arc::new(move |finding| {
             eprintln!(
                 "[{:?}] {} {}: {}",
@@ -276,6 +293,7 @@ impl Session {
                     now_ms(),
                 );
             }
+            route(&sink_notifier, &sink_dir, &finding);
         });
         let engine = Engine::new(Config {
             allow: effective.allow.clone(),
@@ -301,6 +319,7 @@ impl Session {
             stop,
             server: Some(server),
             log,
+            notifier,
         })
     }
 
@@ -385,6 +404,45 @@ fn now_ms() -> u64 {
         .map_or(0, |elapsed| {
             u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
         })
+}
+
+/// Routes a finding by severity (PRD FR-NOTIFY). A CRITICAL finding pauses
+/// the session until `resume` or `kill`.
+#[cfg(target_os = "linux")]
+fn route(notifier: &pks_detect::Notifier, session_dir: &Path, finding: &pks_core::Finding) {
+    if notifier.notify(finding) {
+        pause_session(session_dir);
+    }
+}
+
+/// Pauses the sandbox of the session in `dir`: SIGSTOP to its process group,
+/// then the paused marker. It stays paused until `resume` sends SIGCONT.
+#[cfg(target_os = "linux")]
+fn pause_session(dir: &Path) {
+    use pks_sandbox::linux::signal::{Signal, signal_tree};
+    let session = dir.file_name().map_or_else(
+        || "this session".to_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let Some(pid) = pks_detect::read_pid(dir) else {
+        eprintln!("ide: could not pause {session}: the IDE is not running");
+        return;
+    };
+    match signal_tree(pid, Signal::Stop) {
+        Ok(_) => {
+            let marker = dir.join(pks_detect::PAUSED_FILE);
+            if let Err(error) = std::fs::write(&marker, b"") {
+                eprintln!(
+                    "ide: paused, but cannot write {}: {error}",
+                    marker.display()
+                );
+            }
+            eprintln!(
+                "ide: paused {session}. Run 'pumpkin-shell resume {session}' to continue or 'pumpkin-shell kill {session}' to stop."
+            );
+        }
+        Err(error) => eprintln!("ide: could not pause {session}: {error}"),
+    }
 }
 
 /// Prints a finding and writes it to the session's signed log. Used by the

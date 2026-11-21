@@ -15,6 +15,28 @@ pub struct SessionInfo {
     pub watch: PathBuf,
     /// Path to the snapshot directory.
     pub snapshot: PathBuf,
+    /// Path to the file holding the sandbox's process ID, while it runs.
+    pub pid: PathBuf,
+    /// Path to the marker that exists while the session is paused.
+    pub paused: PathBuf,
+}
+
+/// File in a session directory with the sandbox's process ID, written while
+/// the IDE runs.
+pub const PID_FILE: &str = "ide.pid";
+/// File in a session directory that exists while the session is paused.
+pub const PAUSED_FILE: &str = "paused";
+
+/// The sandbox's process ID from the PID file in `dir`. `None` when the file
+/// is missing or does not hold a number (the IDE is not running).
+#[must_use]
+pub fn read_pid(dir: &std::path::Path) -> Option<i32> {
+    std::fs::read_to_string(dir.join(PID_FILE))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+        .filter(|pid| *pid > 0)
 }
 
 impl SessionInfo {
@@ -29,6 +51,8 @@ impl SessionInfo {
             log: session_dir.join("session.jsonl"),
             watch: session_dir.join("watch.jsonl"),
             snapshot: session_dir.join("snapshot.git"),
+            pid: session_dir.join(PID_FILE),
+            paused: session_dir.join(PAUSED_FILE),
             dir: session_dir,
         }
     }

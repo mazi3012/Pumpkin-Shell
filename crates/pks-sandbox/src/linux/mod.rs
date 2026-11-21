@@ -5,6 +5,7 @@ pub mod bwrap;
 pub mod display;
 pub mod init;
 pub mod relay;
+pub mod signal;
 pub mod watch;
 
 use std::fs;
@@ -123,16 +124,32 @@ impl SandboxBackend for LinuxBackend {
             host_ports: spec.host_ports.clone(),
             binds: spec.binds.clone(),
         };
-        let status = Command::new(&self.bwrap)
+        let mut child = Command::new(&self.bwrap)
             .args(bwrap::bwrap_args(&plan))
-            .status()
+            .spawn()
             .map_err(|source| SandboxError::Io {
                 context: "cannot start bubblewrap".to_owned(),
                 source,
             })?;
+        if let Some(pid_file) = &spec.pid_file
+            && let Err(error) = write_private(pid_file, child.id().to_string().as_bytes())
+        {
+            // Without the PID the session cannot be paused or killed, so it
+            // is stopped now (fail closed).
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
+        let waited = child.wait().map_err(|source| SandboxError::Io {
+            context: "cannot wait for the IDE".to_owned(),
+            source,
+        });
+        if let Some(pid_file) = &spec.pid_file {
+            let _ = fs::remove_file(pid_file);
+        }
         // The display stops when `display` is dropped, after the IDE exits.
         drop(display);
         drop(session);
-        Ok(status)
+        waited
     }
 }

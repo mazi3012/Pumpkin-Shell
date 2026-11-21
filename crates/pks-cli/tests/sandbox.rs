@@ -190,6 +190,7 @@ impl Layout {
             proxy_socket: self.proxy.clone(),
             host_ports: self.host_ports.clone(),
             binds: Vec::new(),
+            pid_file: None,
         }
     }
 }
@@ -774,5 +775,50 @@ fn ide_refuses_a_missing_repo_without_starting_anything() -> TestResult {
     assert!(text.contains("ide:"), "{text}");
     // Nothing was started, so no IDE home was created either.
     assert!(!home.path().join("data").join("pumpkin-shell").exists());
+    Ok(())
+}
+
+/// Pausing a running sandbox stops the IDE's own processes, and resuming it
+/// lets them finish. The IDE sleeps and then writes a marker: the marker must
+/// not appear while the sandbox is paused.
+#[test]
+fn pausing_the_sandbox_stops_its_processes_until_resumed() -> TestResult {
+    use pks_sandbox::linux::signal::{Signal, signal_tree};
+    use std::time::{Duration, Instant};
+
+    let layout = Layout::new()?;
+    let pid_dir = tempfile::tempdir()?;
+    let pid_file = pid_dir.path().join("ide.pid");
+    let mut spec = layout.spec_running("sleep 2\necho done > /workspace/marker\nexit 0\n");
+    spec.pid_file = Some(pid_file.clone());
+    let backend = backend()?;
+    let runner = std::thread::spawn(move || backend.run(&spec));
+
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let pid: i32 = loop {
+        if let Ok(text) = fs::read_to_string(&pid_file)
+            && let Ok(pid) = text.trim().parse()
+        {
+            break pid;
+        }
+        assert!(Instant::now() < deadline, "the PID file never appeared");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+
+    signal_tree(pid, Signal::Stop)?;
+    std::thread::sleep(Duration::from_secs(4));
+    assert!(
+        !layout.repo.join("marker").exists(),
+        "the IDE finished while the sandbox was paused"
+    );
+
+    signal_tree(pid, Signal::Continue)?;
+    let status = runner.join().map_err(|_| "the sandbox thread panicked")??;
+    assert!(status.success(), "exit {status}");
+    assert!(
+        layout.repo.join("marker").exists(),
+        "the IDE did not finish after resume"
+    );
+    assert!(!pid_file.exists(), "the PID file was not removed on exit");
     Ok(())
 }
