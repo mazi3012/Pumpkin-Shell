@@ -778,6 +778,7 @@ dependencies = [
  "sha1",
  "sha2",
  "strsim",
+ "tempfile",
  "time",
  "tokio",
  "tower-service",

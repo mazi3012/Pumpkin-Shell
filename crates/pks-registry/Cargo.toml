@@ -24,5 +24,8 @@ sha2.workspace = true
 strsim.workspace = true
 time.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+
 [lints]
 workspace = true

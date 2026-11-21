@@ -116,8 +116,21 @@ impl Upstream {
     /// transport error, any answer other than 200 (redirects included), and on
     /// a body over [`MAX_BODY`].
     pub fn get(&self, url: &str) -> Result<Vec<u8>, UpstreamError> {
+        self.get_accept(url, None)
+    }
+
+    /// [`Upstream::get`] with an `Accept` header, for registries that answer
+    /// differently by media type (the PyPI index needs the JSON type).
+    ///
+    /// # Errors
+    /// The same as [`Upstream::get`].
+    pub fn get_accept(&self, url: &str, accept: Option<&str>) -> Result<Vec<u8>, UpstreamError> {
         let uri = check_url(url)?;
-        let request = Request::get(uri)
+        let mut builder = Request::get(uri);
+        if let Some(value) = accept {
+            builder = builder.header(http::header::ACCEPT, value);
+        }
+        let request = builder
             .body(Empty::<Bytes>::new())
             .map_err(|e| UpstreamError::Transport(format!("request: {e}")))?;
         self.runtime.block_on(async {

@@ -7,6 +7,8 @@
 pub mod age;
 pub mod document;
 pub mod integrity;
+pub mod mirror;
 pub mod names;
+pub mod server;
 pub mod typosquat;
 pub mod upstream;
