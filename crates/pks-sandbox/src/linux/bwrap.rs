@@ -39,6 +39,13 @@ pub const PROXY_LISTEN: &str = "127.0.0.1:3129";
 pub const PROXY_SOCKET_IN: &str = "/run/pks/proxy.sock";
 /// Where the Pumpkin-Shell binary appears, to run the in-sandbox step.
 pub const INIT_IN: &str = "/run/pks/pumpkin-shell";
+/// Where the mirror listens inside the sandbox. Package managers are set to
+/// reach it here (Phase 14).
+pub const MIRROR_LISTEN: &str = "127.0.0.1:3130";
+/// The same address as a URL, for the package managers' settings.
+pub const MIRROR_URL: &str = "http://127.0.0.1:3130";
+/// Where the mirror's Unix socket appears inside the sandbox.
+pub const MIRROR_SOCKET_IN: &str = "/run/pks/mirror.sock";
 /// Where the broker directory appears inside the sandbox (Phase 12).
 pub const BROKER_IN: &str = "/run/pks/broker";
 /// The request socket the wrappers send to. Created by the host.
@@ -94,6 +101,8 @@ pub struct Plan {
     pub binds: Vec<crate::spec::Bind>,
     /// Host directory for the brokers, or `None` for no broker.
     pub broker_dir: Option<PathBuf>,
+    /// Host path of the mirror's Unix socket, or `None` for no mirror.
+    pub mirror_socket: Option<PathBuf>,
     /// System programs that get a broker wrapper: `xdg-open` and `git`, the
     /// ones installed on the host.
     pub shims: Vec<&'static str>,
@@ -184,6 +193,11 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     // The egress proxy's socket. The IDE reaches it through the relay on
     // loopback; there is no other route out (the network is unshared).
     push_path(&mut args, "--ro-bind", &plan.proxy_socket, PROXY_SOCKET_IN);
+    // The package mirror (Phase 14): its socket is the only thing mounted, and
+    // the package managers are pointed at its loopback address.
+    if let Some(socket) = &plan.mirror_socket {
+        push_path(&mut args, "--ro-bind", socket, MIRROR_SOCKET_IN);
+    }
     // The broker (Phase 12): a shared directory for the request and callback
     // sockets, and the wrappers over `xdg-open` and `git`. The real git is
     // mounted first, under a private path. Every wrapper is this binary.
@@ -226,6 +240,30 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
         };
         push(&mut args, &["--setenv", name, value]);
     }
+    if plan.mirror_socket.is_some() {
+        // npm and pip read these. Scripts of installed packages do not run by
+        // default (PRD FR-REG, install scripts).
+        push(
+            &mut args,
+            &[
+                "--setenv",
+                "npm_config_registry",
+                &format!("{MIRROR_URL}/npm/"),
+            ],
+        );
+        push(
+            &mut args,
+            &["--setenv", "npm_config_ignore_scripts", "true"],
+        );
+        push(
+            &mut args,
+            &[
+                "--setenv",
+                "PIP_INDEX_URL",
+                &format!("{MIRROR_URL}/pypi/simple/"),
+            ],
+        );
+    }
     push(&mut args, &["--chdir", WORKSPACE]);
 
     // The in-sandbox step: Landlock and the seccomp filter, then exec the IDE.
@@ -246,6 +284,11 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
             PROXY_SOCKET_IN,
         ],
     );
+    // Landlock needs every listed path to exist, so the mirror socket is listed
+    // only when the sandbox has one.
+    if plan.mirror_socket.is_some() {
+        push(&mut args, &["--ro", MIRROR_SOCKET_IN]);
+    }
     // The relay runs inside the sandbox, before the IDE: loopback to the proxy.
     push(
         &mut args,
@@ -256,6 +299,18 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
             PROXY_SOCKET_IN,
         ],
     );
+    // The mirror's loopback relay (Phase 14), started the same way.
+    if plan.mirror_socket.is_some() {
+        push(
+            &mut args,
+            &[
+                "--mirror-listen",
+                MIRROR_LISTEN,
+                "--mirror-socket",
+                MIRROR_SOCKET_IN,
+            ],
+        );
+    }
     for port in &plan.host_ports {
         push(&mut args, &["--relay-host-port", &port.to_string()]);
     }
@@ -319,6 +374,7 @@ mod tests {
             host_ports: Vec::new(),
             binds: Vec::new(),
             broker_dir: None,
+            mirror_socket: None,
             shims: Vec::new(),
         }
     }
@@ -545,5 +601,54 @@ mod tests {
         odd.repo = PathBuf::from("/srv/my project\nwith; rm -rf");
         let args = bwrap_args(&odd);
         assert!(args.iter().any(|a| a == odd.repo.as_os_str()));
+    }
+
+    /// A plan with the mirror on, for the mirror tests.
+    fn plan_with_mirror() -> Plan {
+        Plan {
+            mirror_socket: Some(PathBuf::from("/srv/session/mirror.sock")),
+            ..plan()
+        }
+    }
+
+    #[test]
+    fn with_a_mirror_the_socket_is_mounted_and_npm_and_pip_are_pointed_at_it() {
+        let args: Vec<String> = bwrap_args(&plan_with_mirror())
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        let joined = args.join(" ");
+        assert!(
+            joined.contains("--ro-bind /srv/session/mirror.sock /run/pks/mirror.sock"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--setenv npm_config_registry http://127.0.0.1:3130/npm/"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--setenv npm_config_ignore_scripts true"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--setenv PIP_INDEX_URL http://127.0.0.1:3130/pypi/simple/"),
+            "{joined}"
+        );
+        assert!(
+            joined.contains("--mirror-listen 127.0.0.1:3130 --mirror-socket /run/pks/mirror.sock"),
+            "{joined}"
+        );
+    }
+
+    #[test]
+    fn without_a_mirror_none_of_the_mirror_settings_appear() {
+        let joined = bwrap_args(&plan())
+            .iter()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!joined.contains("mirror"), "{joined}");
+        assert!(!joined.contains("npm_config_registry"), "{joined}");
+        assert!(!joined.contains("PIP_INDEX_URL"), "{joined}");
     }
 }

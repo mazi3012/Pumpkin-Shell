@@ -75,6 +75,12 @@ enum Command {
         /// Path that may only be read (repeatable).
         #[arg(long = "ro")]
         ro: Vec<PathBuf>,
+        /// Loopback address the in-sandbox mirror relay listens on (Phase 14). Needs --mirror-socket.
+        #[arg(long = "mirror-listen", requires = "mirror_socket")]
+        mirror_listen: Option<std::net::SocketAddr>,
+        /// The mirror's Unix socket, as seen inside the sandbox. Needs --mirror-listen.
+        #[arg(long = "mirror-socket", requires = "mirror_listen")]
+        mirror_socket: Option<PathBuf>,
         /// Socket the OAuth callback agent creates (Phase 12.2). Needs --callback-target.
         #[arg(long = "callback-socket", requires = "callback_target")]
         callback_socket: Option<PathBuf>,
@@ -249,15 +255,18 @@ fn main() -> ExitCode {
             relay_listen,
             relay_socket,
             relay_host_ports,
+            mirror_listen,
+            mirror_socket,
             callback_socket,
             callback_target,
             command,
         }) => ide::sandbox_init(
             &rw,
             &ro,
-            relay_listen,
-            relay_socket,
-            &relay_host_ports,
+            relay_listen
+                .zip(relay_socket)
+                .map(|(listen, socket)| (listen, socket, relay_host_ports)),
+            mirror_listen.zip(mirror_socket),
             callback_socket.zip(callback_target),
             &command,
         ),

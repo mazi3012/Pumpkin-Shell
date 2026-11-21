@@ -22,6 +22,19 @@ use crate::addr;
 
 /// Rule for a destination that is not on the allowlist (PRD FR-DET).
 pub const NET_UNKNOWN_DOMAIN: RuleId = RuleId::new("NET-UNKNOWN-DOMAIN");
+/// Rule for a direct connection from the sandbox to a real package registry.
+/// Packages must come through the mirror, which applies the guard (PRD FR-REG).
+pub const REG_DIRECT_BYPASS: RuleId = RuleId::new("REG-DIRECT-BYPASS");
+/// Registry hosts the sandbox may not reach directly. The mirror is the only
+/// route to them. The list is checked, not guessed: each host was seen as the
+/// download host of npm or PyPI (see DECISIONS, Phase 14).
+pub const REGISTRY_HOSTS: [&str; 3] = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
+
+/// Whether `endpoint` is a real registry host, on any port.
+#[must_use]
+pub fn is_registry_host(endpoint: &HostPort) -> bool {
+    REGISTRY_HOSTS.contains(&endpoint.host())
+}
 /// Rule for a destination that resolves to a private or reserved address.
 pub const NET_PRIVATE_IP: RuleId = RuleId::new("NET-PRIVATE-IP");
 /// Rule for more than 10 MB sent to one host.
@@ -275,6 +288,17 @@ impl Engine {
             );
             self.connect_host_port(port)
         } else {
+            if is_registry_host(&endpoint) {
+                self.emit(
+                    REG_DIRECT_BYPASS,
+                    Severity::High,
+                    &endpoint.to_string(),
+                    "a direct connection to a package registry; the package manager should use the mirror".to_owned(),
+                    "Install packages through the mirror: npm and pip are already set to it in the sandbox.",
+                );
+                let _ = client.write_all(&reply("403 Forbidden"));
+                return;
+            }
             if !self.permitted(&endpoint) {
                 let _ = client.write_all(&reply("403 Forbidden"));
                 return;
@@ -409,6 +433,26 @@ fn relay<C: Client>(client: C, upstream: TcpStream, endpoint: &HostPort, events:
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_three_registry_hosts_are_registry_hosts_on_any_port_and_nothing_else_is() {
+        for host in [
+            "registry.npmjs.org:443",
+            "pypi.org:443",
+            "files.pythonhosted.org:8443",
+        ] {
+            let endpoint = HostPort::parse(host).unwrap_or_else(|e| panic!("{e}"));
+            assert!(is_registry_host(&endpoint), "{host}");
+        }
+        for host in [
+            "example.com:443",
+            "pypi.org.evil.example:443",
+            "npmjs.org:443",
+            "127.0.0.1:3130",
+        ] {
+            let endpoint = HostPort::parse(host).unwrap_or_else(|e| panic!("{e}"));
+            assert!(!is_registry_host(&endpoint), "{host}");
+        }
+    }
 
     /// A connected pair of loopback streams: the client end and the proxy end.
     /// TCP works on every platform, so the tests run on Windows too.

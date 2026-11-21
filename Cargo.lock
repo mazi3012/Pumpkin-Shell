@@ -723,6 +723,7 @@ dependencies = [
  "pks-core",
  "pks-detect",
  "pks-proxy",
+ "pks-registry",
  "pks-sandbox",
  "pks-scan",
  "serde",

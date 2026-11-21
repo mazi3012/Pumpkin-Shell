@@ -49,6 +49,13 @@ impl Source for crate::upstream::Upstream {
     }
 }
 
+/// A shared source, so one upstream client can serve the mirror and OSV.
+impl<T: Source> Source for std::sync::Arc<T> {
+    fn fetch(&self, url: &str, accept: Option<&str>) -> Result<Vec<u8>, UpstreamError> {
+        (**self).fetch(url, accept)
+    }
+}
+
 /// One answer to a request.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reply {

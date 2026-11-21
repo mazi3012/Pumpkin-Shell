@@ -56,6 +56,13 @@ impl Post for Upstream {
     }
 }
 
+/// A shared client, so one upstream connection can serve the mirror and OSV.
+impl<T: Post> Post for std::sync::Arc<T> {
+    fn post_json(&self, url: &str, json: &str) -> Result<Vec<u8>, UpstreamError> {
+        (**self).post_json(url, json)
+    }
+}
+
 /// The JSON body of an OSV query for one version.
 #[must_use]
 pub fn query_body(ecosystem: &str, name: &str, version: &str) -> String {

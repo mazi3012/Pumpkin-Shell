@@ -193,6 +193,7 @@ impl Layout {
             pid_file: None,
             broker_dir: None,
             display_file: None,
+            mirror_socket: None,
         }
     }
 }
@@ -973,5 +974,118 @@ c.close()\n",
         greeting, "hello",
         "the callback did not reach the IDE listener"
     );
+    Ok(())
+}
+
+// --- package mirror (Phase 14) -----------------------------------------------
+
+/// A registry with one old version of `pkg`.
+struct OneOldVersion;
+
+impl pks_registry::mirror::Source for OneOldVersion {
+    fn fetch(
+        &self,
+        _url: &str,
+        _accept: Option<&str>,
+    ) -> Result<Vec<u8>, pks_registry::upstream::UpstreamError> {
+        Ok(serde_json::json!({
+            "name": "pkg",
+            "dist-tags": { "latest": "1.0.0" },
+            "versions": { "1.0.0": { "dist": { "tarball": "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } } },
+            "time": { "created": "2014-01-01T00:00:00Z", "1.0.0": "2014-01-01T00:00:00Z" },
+        })
+        .to_string()
+        .into_bytes())
+    }
+}
+
+/// OSV with nothing to report.
+struct NoMalware;
+
+impl pks_registry::osv::Advisories for NoMalware {
+    fn check(&self, _: &str, _: &str, _: &str) -> pks_registry::osv::Verdict {
+        pks_registry::osv::Verdict::Clean
+    }
+}
+
+/// The current time in Unix seconds.
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// The sandbox reaches the mirror on its loopback port, which the relay passes
+/// to the mirror's Unix socket on the host.
+#[test]
+fn the_sandbox_reaches_the_mirror_on_its_loopback_port() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        OneOldVersion,
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(|| 1_800_000_000),
+        Box::new(NoMalware),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = "curl -s -o /workspace/doc.json -w '%{http_code}' http://127.0.0.1:3130/npm/pkg > /workspace/status.txt || exit 5\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    assert!(status?.success());
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("status.txt"))?.trim(),
+        "200"
+    );
+    assert!(fs::read_to_string(layout.repo.join("doc.json"))?.contains("\"versions\""));
+    Ok(())
+}
+
+/// PRD FR-REG, end to end with the real registry: npm inside the sandbox
+/// installs a real package through the mirror, and a direct connection to the
+/// registry is refused. Needs internet access to registry.npmjs.org.
+#[test]
+fn npm_installs_a_real_package_through_the_mirror_and_direct_access_is_refused() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = "cd /workspace || exit 2\nnpm config get registry > /workspace/registry.txt || exit 3\nnpm install left-pad@1.3.0 --no-audit --no-fund > /workspace/npm.log 2>&1 || exit 4\ntest -f /workspace/node_modules/left-pad/package.json || exit 5\ncurl -s -m 15 https://registry.npmjs.org/left-pad > /dev/null 2>&1; echo $? > /workspace/direct.txt\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    let status = status?;
+    let log = fs::read_to_string(layout.repo.join("npm.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; npm log:\n{log}");
+    let registry = fs::read_to_string(layout.repo.join("registry.txt"))?;
+    assert!(
+        registry.contains("127.0.0.1:3130"),
+        "npm does not use the mirror: {registry}"
+    );
+    let direct = fs::read_to_string(layout.repo.join("direct.txt"))?;
+    assert_ne!(direct.trim(), "0", "a direct registry connection succeeded");
     Ok(())
 }

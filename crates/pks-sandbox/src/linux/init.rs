@@ -110,16 +110,16 @@ pub fn run(
     rw: &[PathBuf],
     ro: &[PathBuf],
     command: &[OsString],
-    relay: Option<&Relay>,
+    relays: &[Relay],
     callback: Option<&Callback>,
 ) -> SandboxError {
     if let Err(error) = restrict_filesystem(rw, ro) {
         return error;
     }
-    if let Some(relay) = relay
-        && let Err(error) = start_relay(relay)
-    {
-        return error;
+    for relay in relays {
+        if let Err(error) = start_relay(relay) {
+            return error;
+        }
     }
     if let Some(callback) = callback
         && let Err(error) = start_callback(callback)
