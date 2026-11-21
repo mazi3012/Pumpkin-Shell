@@ -11,13 +11,15 @@
 //! prompt, so a retrying IDE does not stack up prompts.
 
 use std::collections::HashMap;
-use std::io::{BufRead, IsTerminal, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use pks_sandbox::linux::broker::{Decision, Handler, Request};
+
+use crate::ask;
 
 /// How long an answered request is remembered, so an identical one is refused
 /// without asking again.
@@ -26,6 +28,9 @@ const REPEAT_WINDOW: Duration = Duration::from_secs(60);
 /// Performs brokered actions for one repo.
 pub struct Host {
     repo: PathBuf,
+    /// The host desktop the popups are shown on. `None` shows nothing and
+    /// refuses every request.
+    desktop: Option<std::ffi::OsString>,
     /// When each recent request was answered, by request text.
     answered: Mutex<HashMap<String, Instant>>,
     /// Whether `xclip` is installed, so copy is offered.
@@ -37,11 +42,21 @@ impl Host {
     pub fn new(repo: &Path) -> Self {
         Self {
             repo: repo.to_path_buf(),
+            desktop: std::env::var_os("DISPLAY"),
             answered: Mutex::new(HashMap::new()),
             clipboard: Command::new("xclip")
                 .arg("-version")
                 .output()
                 .is_ok_and(|out| out.status.success()),
+        }
+    }
+
+    /// A host with no desktop, for tests: nothing is shown, requests are refused.
+    #[cfg(test)]
+    fn without_desktop(repo: &Path) -> Self {
+        Self {
+            desktop: None,
+            ..Self::new(repo)
         }
     }
 
@@ -59,23 +74,6 @@ impl Host {
             answered.insert(key.to_owned(), Instant::now());
         }
     }
-}
-
-/// Reads one line from the terminal. `None` when there is no terminal or the
-/// input ended.
-fn read_answer(question: &str) -> Option<String> {
-    let stdin = std::io::stdin();
-    if !stdin.is_terminal() {
-        eprintln!("broker: {question} There is no terminal to ask on, so it is denied.");
-        return None;
-    }
-    eprint!("broker: {question} ");
-    let _ = std::io::stderr().flush();
-    let mut line = String::new();
-    if stdin.lock().read_line(&mut line).unwrap_or(0) == 0 {
-        return None;
-    }
-    Some(line.trim().to_ascii_lowercase())
 }
 
 /// Copies `text` to the clipboard with `xclip`, as a separate program with the
@@ -111,25 +109,42 @@ impl Handler for Host {
         }
         let decision = match request {
             Request::Open { url } => {
-                let choices = if self.clipboard {
-                    "the IDE asks to open this link: [o]pen in browser, [c]opy link, [n]o"
+                let open = "Open in browser";
+                let copy = "Copy link";
+                let deny = "Deny";
+                let options: Vec<&str> = if self.clipboard {
+                    vec![open, copy, deny]
                 } else {
-                    "the IDE asks to open this link: [o]pen in browser, [n]o"
+                    vec![open, deny]
                 };
-                eprintln!("broker: {url}");
-                match read_answer(&format!("{choices}?")).as_deref() {
-                    Some("o" | "open" | "y" | "yes") => Decision::Allow,
-                    Some("c" | "copy") if self.clipboard => Decision::CopyOnly,
+                let text = format!("Kiro wants to open this link:\n\n{url}");
+                match ask::choose(
+                    self.desktop.clone(),
+                    "Pumpkin-Shell: open a link?",
+                    &text,
+                    &options,
+                )
+                .as_deref()
+                {
+                    Some(choice) if choice == open => Decision::Allow,
+                    Some(choice) if choice == copy => Decision::CopyOnly,
                     _ => Decision::Deny,
                 }
             }
             Request::Push { remote, branch } => {
-                let question = format!(
-                    "the IDE asks to push branch {branch} to remote {remote} of {}. Allow? [y/N]",
+                let text = format!(
+                    "Kiro wants to push branch {branch} to remote {remote} of:\n{}",
                     self.repo.display()
                 );
-                match read_answer(&question).as_deref() {
-                    Some("y" | "yes") => Decision::Allow,
+                match ask::choose(
+                    self.desktop.clone(),
+                    "Pumpkin-Shell: push to git?",
+                    &text,
+                    &["Push", "Deny"],
+                )
+                .as_deref()
+                {
+                    Some("Push") => Decision::Allow,
                     _ => Decision::Deny,
                 }
             }
@@ -199,9 +214,9 @@ mod tests {
     }
 
     #[test]
-    fn without_a_terminal_every_request_is_denied() {
+    fn without_a_desktop_every_request_is_denied() {
         // The test runner's stdin is not a terminal.
-        let host = Host::new(Path::new("/nonexistent"));
+        let host = Host::without_desktop(Path::new("/nonexistent"));
         let open = Request::Open {
             url: "https://a.example/".to_owned(),
         };
@@ -215,7 +230,7 @@ mod tests {
 
     #[test]
     fn a_request_answered_a_moment_ago_is_not_asked_again() {
-        let host = Host::new(Path::new("/nonexistent"));
+        let host = Host::without_desktop(Path::new("/nonexistent"));
         let open = Request::Open {
             url: "https://a.example/".to_owned(),
         };

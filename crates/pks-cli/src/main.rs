@@ -1,6 +1,8 @@
 //! `pumpkin-shell`: sandbox and tripwire system for AI-powered IDEs.
 
 #[cfg(target_os = "linux")]
+mod ask;
+#[cfg(target_os = "linux")]
 mod broker;
 mod doctor;
 mod ide;
