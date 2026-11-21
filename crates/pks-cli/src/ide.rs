@@ -123,6 +123,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         host_ports: effective.host_ports.iter().copied().collect(),
         binds: session.binds(),
         pid_file: Some(session.dir.join(pks_detect::PID_FILE)),
+        broker_dir: Some(session.dir.join("broker")),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -240,6 +241,8 @@ struct Session {
     log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
     /// Severity routing and desktop notifications (PRD FR-NOTIFY).
     notifier: std::sync::Arc<pks_detect::Notifier>,
+    /// Stops the broker request listener and the callback listener.
+    broker_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
 }
 
 #[cfg(target_os = "linux")]
@@ -292,6 +295,39 @@ impl Session {
             true,
             Arc::new(AtomicBool::new(false)),
         ));
+        // The brokers (Phase 12). Requests from the sandbox arrive on a socket
+        // in the broker directory, which is the only host path shared with it.
+        let broker_stop = Arc::new(AtomicBool::new(false));
+        let broker_dir = dir.join("broker");
+        create_private_dir(&broker_dir)
+            .map_err(|e| format!("cannot create {}: {e}", broker_dir.display()))?;
+        let request_listener = UnixListener::bind(broker_dir.join("request.sock"))
+            .map_err(|e| format!("cannot open the broker socket: {e}"))?;
+        let broker_host: Arc<dyn pks_sandbox::linux::broker::Handler + Send + Sync> =
+            Arc::new(crate::broker::Host::new(repo));
+        let request_stop = Arc::clone(&broker_stop);
+        std::thread::spawn(move || {
+            let _ = pks_sandbox::linux::broker::serve(request_listener, broker_host, request_stop);
+        });
+        // The OAuth callback (Phase 12.2): the host's port 3128 is passed to
+        // the IDE's listener inside the sandbox on the same port.
+        match std::net::TcpListener::bind("127.0.0.1:3128") {
+            Ok(listener) => {
+                let agent_socket = broker_dir.join("callback.sock");
+                let callback_stop = Arc::clone(&broker_stop);
+                std::thread::spawn(move || {
+                    let _ = pks_sandbox::linux::broker::callback_host(
+                        listener,
+                        agent_socket,
+                        callback_stop,
+                    );
+                });
+            }
+            Err(error) => eprintln!(
+                "ide: 127.0.0.1:3128 is not free ({error}), so OAuth sign-in cannot finish in the IDE"
+            ),
+        }
+
         let socket = dir.join("proxy.sock");
         let listener = UnixListener::bind(&socket)
             .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
@@ -351,6 +387,7 @@ impl Session {
             server: Some(server),
             log,
             notifier,
+            broker_stop,
         })
     }
 
@@ -414,6 +451,7 @@ impl Session {
     fn close(mut self) {
         use std::sync::atomic::Ordering;
         self.stop.store(true, Ordering::Relaxed);
+        self.broker_stop.store(true, Ordering::Relaxed);
         if let Some(handle) = self.server.take() {
             let _ = handle.join();
         }
@@ -678,6 +716,7 @@ pub fn sandbox_init(
     relay_listen: Option<std::net::SocketAddr>,
     relay_socket: Option<PathBuf>,
     relay_host_ports: &[u16],
+    callback: Option<(PathBuf, std::net::SocketAddr)>,
     command: &[std::ffi::OsString],
 ) -> ExitCode {
     let relay = match (relay_listen, relay_socket) {
@@ -688,9 +727,29 @@ pub fn sandbox_init(
         }),
         _ => None,
     };
-    let error = pks_sandbox::linux::init::run(rw, ro, command, relay.as_ref());
+    let callback =
+        callback.map(|(socket, target)| pks_sandbox::linux::init::Callback { socket, target });
+    let error = pks_sandbox::linux::init::run(rw, ro, command, relay.as_ref(), callback.as_ref());
     eprintln!("sandbox-init: {error}");
     ExitCode::from(126)
+}
+
+/// The callback agent inside the sandbox. Runs until the sandbox ends.
+#[cfg(target_os = "linux")]
+pub fn sandbox_callback(socket: &Path, target: std::net::SocketAddr) -> ExitCode {
+    match pks_sandbox::linux::broker::sandbox_callback(socket, target) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("sandbox-callback: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sandbox_callback(_socket: &Path, _target: std::net::SocketAddr) -> ExitCode {
+    eprintln!("sandbox-callback: Linux only");
+    ExitCode::from(1)
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -700,6 +759,7 @@ pub fn sandbox_init(
     _relay_listen: Option<std::net::SocketAddr>,
     _relay_socket: Option<PathBuf>,
     _relay_host_ports: &[u16],
+    _callback: Option<(PathBuf, std::net::SocketAddr)>,
     _command: &[std::ffi::OsString],
 ) -> ExitCode {
     eprintln!("sandbox-init: Linux only");

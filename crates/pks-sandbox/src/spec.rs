@@ -76,6 +76,11 @@ pub struct LaunchSpec {
     /// (bubblewrap runs with `--new-session`), so pausing and killing the
     /// session signal that group. `None` writes nothing.
     pub pid_file: Option<PathBuf>,
+    /// Host directory shared with the sandbox for the brokers (Phase 12): the
+    /// request socket, and the callback socket the in-sandbox agent creates.
+    /// `None` runs the IDE with no broker: `xdg-open` and `git` are the
+    /// system programs, and nothing can reach the host.
+    pub broker_dir: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -315,6 +320,7 @@ mod tests {
                 host_ports: Vec::new(),
                 binds: Vec::new(),
                 pid_file: None,
+                broker_dir: None,
             };
             Ok(Self { _dir: dir, spec })
         }

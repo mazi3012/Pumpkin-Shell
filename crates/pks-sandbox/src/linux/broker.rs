@@ -174,6 +174,85 @@ fn answer(mut stream: UnixStream, handler: &dyn Handler) -> std::io::Result<()> 
     stream.write_all(b"\n")
 }
 
+/// Sends one request line from inside the sandbox and returns the reply line.
+/// The host may take a while to answer (the user is asked), so the wait is
+/// long.
+///
+/// # Errors
+/// Fails when the broker socket cannot be reached or no reply comes.
+pub fn request(socket: &std::path::Path, line: &str) -> Result<String, String> {
+    let mut stream =
+        UnixStream::connect(socket).map_err(|e| format!("the broker is not reachable: {e}"))?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(300)))
+        .map_err(|e| format!("cannot set a timeout: {e}"))?;
+    stream
+        .write_all(format!("{line}\n").as_bytes())
+        .map_err(|e| format!("cannot send the request: {e}"))?;
+    let mut reply = String::new();
+    BufReader::new(stream)
+        .read_line(&mut reply)
+        .map_err(|e| format!("no reply from the broker: {e}"))?;
+    Ok(reply.trim_end_matches(['\r', '\n']).to_owned())
+}
+
+/// Host side of the callback relay (Phase 12, OAuth sign-in). Each connection
+/// to the host's loopback port is passed to the in-sandbox agent's socket, and
+/// from there to the IDE's own listener on the same port.
+///
+/// # Errors
+/// Fails when the listener cannot be set up.
+pub fn callback_host(
+    listener: std::net::TcpListener,
+    agent_socket: std::path::PathBuf,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    listener.set_nonblocking(true)?;
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((tcp, _)) => {
+                let _ = tcp.set_nonblocking(false);
+                // A connection the agent refuses is dropped; the sign-in then
+                // fails visibly in the browser, not silently.
+                if let Ok(unix) = UnixStream::connect(&agent_socket) {
+                    std::thread::spawn(move || crate::linux::relay::pipe(tcp, unix));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
+/// The in-sandbox side of the callback relay. Listens on `socket` (in the
+/// shared broker directory) and passes each connection to `target`, the IDE's
+/// listener inside the sandbox. Runs until the sandbox ends.
+///
+/// # Errors
+/// Fails when the socket cannot be created.
+pub fn sandbox_callback(
+    socket: &std::path::Path,
+    target: std::net::SocketAddr,
+) -> std::io::Result<()> {
+    // A socket left by an earlier run is replaced.
+    let _ = std::fs::remove_file(socket);
+    let listener = UnixListener::bind(socket)?;
+    for stream in listener.incoming() {
+        let Ok(unix) = stream else { continue };
+        std::thread::spawn(move || {
+            // The IDE may not be listening yet; the host then sees the
+            // connection close.
+            if let Ok(tcp) = std::net::TcpStream::connect(target) {
+                crate::linux::relay::pipe(tcp, unix);
+            }
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

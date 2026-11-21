@@ -15,7 +15,7 @@ use pks_sandbox::linux::LinuxBackend;
 use pks_sandbox::{IdeInstall, LaunchSpec, Roots, SandboxBackend};
 use std::os::unix::net::UnixListener;
 use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -191,6 +191,7 @@ impl Layout {
             host_ports: self.host_ports.clone(),
             binds: Vec::new(),
             pid_file: None,
+            broker_dir: None,
         }
     }
 }
@@ -830,5 +831,130 @@ fn pausing_the_sandbox_stops_its_processes_until_resumed() -> TestResult {
         "the IDE did not finish after resume"
     );
     assert!(!pid_file.exists(), "the PID file was not removed on exit");
+    Ok(())
+}
+
+// --- brokers (Phase 12) -----------------------------------------------------
+
+/// Records what the host was asked to do, and agrees to all of it, so the
+/// test sees the requests without any real browser or push.
+#[derive(Default)]
+struct Recorder {
+    calls: std::sync::Mutex<Vec<String>>,
+}
+
+impl pks_sandbox::linux::broker::Handler for Recorder {
+    fn approve(&self, _request: &pks_sandbox::linux::broker::Request) -> bool {
+        true
+    }
+    fn open_url(&self, url: &str) -> Result<(), String> {
+        self.calls
+            .lock()
+            .map_err(|e| e.to_string())?
+            .push(format!("open {url}"));
+        Ok(())
+    }
+    fn push(&self, remote: &str, branch: &str) -> Result<(), String> {
+        self.calls
+            .lock()
+            .map_err(|e| e.to_string())?
+            .push(format!("push {remote} {branch}"));
+        Ok(())
+    }
+}
+
+/// PRD scenario 12 and Phase 12.1 and 12.3, from inside the sandbox: `xdg-open`
+/// and `git push` reach the host, and anything else is refused or stays local.
+#[test]
+fn the_sandbox_opens_urls_and_pushes_only_through_the_host() -> TestResult {
+    let layout = Layout::new()?;
+    let broker_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(broker_dir.path().join("request.sock"))?;
+    let recorder = Arc::new(Recorder::default());
+    let handler: Arc<dyn pks_sandbox::linux::broker::Handler + Send + Sync> = recorder.clone();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server =
+        std::thread::spawn(move || pks_sandbox::linux::broker::serve(listener, handler, flag));
+
+    // Each step must succeed, or the script exits with that step's number.
+    let script = "xdg-open 'https://accounts.example.com/oauth' || exit 11\n\
+git push origin main || exit 12\n\
+git --version > /workspace/version.txt || exit 13\n\
+git push --force origin main 2>/dev/null; [ $? -eq 2 ] || exit 14\n\
+exit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.broker_dir = Some(broker_dir.path().to_path_buf());
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    let status = status?;
+    assert!(status.success(), "exit {status}");
+
+    let calls = recorder.calls.lock().map_err(|e| e.to_string())?.clone();
+    assert_eq!(
+        calls,
+        vec![
+            "open https://accounts.example.com/oauth".to_owned(),
+            "push origin main".to_owned()
+        ],
+        "the host was asked for exactly these actions"
+    );
+    let version = fs::read_to_string(layout.repo.join("version.txt"))?;
+    assert!(version.starts_with("git version"), "{version}");
+    Ok(())
+}
+
+/// Phase 12.2: a connection to the host's port 3128 reaches the IDE's listener
+/// on the same port inside the sandbox, as the OAuth callback does.
+#[test]
+fn the_oauth_callback_reaches_the_ide_listener_inside_the_sandbox() -> TestResult {
+    let layout = Layout::new()?;
+    fs::write(
+        layout.repo.join("callback.py"),
+        "import socket\n\
+s = socket.socket()\n\
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n\
+s.bind(('127.0.0.1', 3128))\n\
+s.listen(1)\n\
+c, _ = s.accept()\n\
+c.sendall(b'hello')\n\
+c.close()\n",
+    )?;
+    let broker_dir = tempfile::tempdir()?;
+    let host_listener = std::net::TcpListener::bind("127.0.0.1:3128")?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let agent = broker_dir.path().join("callback.sock");
+    let relay = std::thread::spawn(move || {
+        pks_sandbox::linux::broker::callback_host(host_listener, agent, flag)
+    });
+
+    let mut spec = layout.spec_running("python3 /workspace/callback.py &\nsleep 6\nexit 0\n");
+    spec.broker_dir = Some(broker_dir.path().to_path_buf());
+    let backend = backend()?;
+    let runner = std::thread::spawn(move || backend.run(&spec));
+
+    // The IDE's listener starts a moment after the sandbox. Connections made
+    // before that are closed without data, so retry until the greeting comes.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let mut greeting = String::new();
+    while std::time::Instant::now() < deadline && greeting.is_empty() {
+        if let Ok(mut client) = std::net::TcpStream::connect("127.0.0.1:3128") {
+            client.set_read_timeout(Some(std::time::Duration::from_secs(2)))?;
+            let _ = std::io::Read::read_to_string(&mut client, &mut greeting);
+        }
+        if greeting.is_empty() {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+    }
+    let status = runner.join().map_err(|_| "the sandbox thread panicked")??;
+    stop.store(true, Ordering::Relaxed);
+    let _ = relay.join();
+    assert!(status.success(), "exit {status}");
+    assert_eq!(
+        greeting, "hello",
+        "the callback did not reach the IDE listener"
+    );
     Ok(())
 }

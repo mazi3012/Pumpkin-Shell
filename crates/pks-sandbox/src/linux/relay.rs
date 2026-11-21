@@ -109,7 +109,9 @@ fn loopback(port: u16) -> SocketAddr {
     SocketAddr::from((Ipv4Addr::LOCALHOST, port))
 }
 
-fn pipe(tcp: TcpStream, unix: UnixStream) {
+/// Copies bytes both ways between a TCP stream and a Unix stream until either
+/// side closes.
+pub(crate) fn pipe(tcp: TcpStream, unix: UnixStream) {
     let (Ok(mut tcp_read), Ok(mut unix_write)) = (tcp.try_clone(), unix.try_clone()) else {
         return;
     };
