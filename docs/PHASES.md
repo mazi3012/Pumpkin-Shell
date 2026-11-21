@@ -21,9 +21,9 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | done (PR #10 merged) |
 | 11 | Notifications and review | T9 | Linux | | done (PR #11 merged; done-when checked with VS Code 2026-11-21, Kiro run pending; 11.4 deferred, DECISIONS Q7) |
-| 12 | Brokers | T10 | Linux | | in-progress (branch `phase-12-brokers`; PR to be opened; Kiro sign-in and git push checked by hand 2026-11-21) |
+| 12 | Brokers | T10 | Linux | | done (PR #12 merged; Kiro sign-in and git push checked by hand 2026-11-21; Windows CI green) |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
-| 14 | npm and PyPI mirror | T12 | Linux | | todo |
+| 14 | npm and PyPI mirror | T12 | Linux | | in-progress (branch `phase-14-registry-guard`; needs a TLS decision, see DECISIONS) |
 | 15 | Linux exec/connect auditing | T13 | Linux | | todo |
 | 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
