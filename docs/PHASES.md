@@ -20,7 +20,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | done (PR #10 merged) |
-| 11 | Notifications and review | T9 | Linux | | in-progress (branch `phase-11-notifications-review`; 11.4 deferred, DECISIONS Q7; desktop alert not yet checked by hand) |
+| 11 | Notifications and review | T9 | Linux | | in-progress (branch `phase-11-notifications-review`; done-when verified 2026-11-21, PR not yet opened; 11.4 deferred, DECISIONS Q7) |
 | 12 | Brokers | T10 | Linux | | todo |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | todo |
@@ -278,8 +278,8 @@ Status of that line (2026-11-21):
 Status (2026-11-21): 11.1, 11.2, 11.3, 11.5, 11.6 (staged writes), 11.7 done with tests. 11.4 (webhook) is deferred: DECISIONS Q7, option (c). 11.6 does not yet list the watched-file diff or quarantined files, or print a restore hint.
 
 **Done when:**
-- Reading a decoy file shows a desktop alert. Not yet checked by hand.
-- A CRITICAL finding pauses Kiro until `resume`. The live staging check finds WS-AUTOAPPROVE while the IDE runs (`a_staged_auto_approve_switch_is_critical_while_the_ide_runs`), and pause and resume are tested (`pausing_the_sandbox_stops_its_processes_until_resumed`). Not yet run end to end with Kiro.
+- [x] Reading a decoy file shows a desktop alert. Checked 2026-11-21 on this machine with VS Code in the sandbox: `cat ~/.aws/credentials` in the sandbox terminal gave a desktop "[High] FS-DECOY-READ" popup, and the session log has the matching record.
+- [x] A CRITICAL finding pauses Kiro until `resume`. Checked 2026-11-21 with VS Code in the sandbox: writing `chat.tools.autoApprove: true` to `.vscode/settings.json` gave a desktop "[Critical] WS-AUTOAPPROVE" popup, the session paused, and all 21 processes in the sandbox tree were in state T. Kiro itself has not been run; VS Code was used as the IDE.
 
 ---
 
