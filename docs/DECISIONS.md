@@ -113,6 +113,8 @@ Record every product or architecture decision here with a date. Never delete ent
 
 | 2026-11-21 | **Phase 12 brokers: three decisions.** (1) `git push` runs on the host after the user approves it in a prompt, with the host's git configuration. The sandbox never gets host git credentials. (2) The in-sandbox proxy relay moves from `127.0.0.1:3128` to `127.0.0.1:3129`. Kiro's OAuth callback listens on `127.0.0.1:3128` inside the sandbox, and the two would collide. The host's loopback port 3128 is used for the callback relay. (3) Opening a URL asks the user first, showing the URL. With no terminal to ask on, it is denied. The user chose "go with the rules, your call". | Phase 12 design. Phase 12 is built in several commits on one branch, with one PR at the end. |
 
+| 2026-11-21 | **The nested display does not exit when its last client leaves.** Xephyr was started with `-terminate`, which stops the server when the last client disconnects. The host's clipboard watcher connects briefly every second, so the display stopped before Kiro connected ("Missing X server"). The flag is removed. The display still stops when the session ends, because `NestedDisplay` kills it on drop. | Found while testing copy and paste in Phase 12. |
+
 ## Assumed defaults (not yet confirmed by user)
 
 | Topic | Default |

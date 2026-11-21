@@ -213,8 +213,8 @@ fn spawn_xephyr(
         // No TCP: the server is reachable only through its Unix socket.
         .arg("-nolisten")
         .arg("tcp")
-        // Stop when the last client disconnects.
-        .arg("-terminate")
+        // No -terminate: the server must outlive the short connections of the
+        // host's clipboard watcher. It is stopped when NestedDisplay is dropped.
         .arg("-auth")
         .arg(xauthority)
         .arg("-title")
