@@ -20,7 +20,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 8 | Linux `ide` backend | T6 | Linux | | done (PR #8 merged at e9daf3f, CI green on both runners; Kiro reaches its sign-in screen) |
 | 9 | Egress proxy | T7 | Both | | done (PR #9 merged at f8ce48c) |
 | 10 | Workspace integrity (Linux) | T8 | Linux | | done (PR #10 merged) |
-| 11 | Notifications and review | T9 | Linux | | in-progress (branch `phase-11-notifications-review`) |
+| 11 | Notifications and review | T9 | Linux | | in-progress (branch `phase-11-notifications-review`; 11.4 waits on DECISIONS Q7; live CRITICAL source and desktop check not yet done) |
 | 12 | Brokers | T10 | Linux | | todo |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | todo |
@@ -275,9 +275,11 @@ Status of that line (2026-11-21):
 11.6. `pumpkin-shell review`: blocks, staged writes to approve/reject, watched-file diff, quarantined files, restore command.
 11.7. `allow` and `allow-write` commands. Every block message names the policy line that would allow it.
 
+Status (2026-11-21): 11.1, 11.2, 11.3, 11.5, 11.6 (staged writes), 11.7 done with tests. 11.4 (webhook) is open: it waits on DECISIONS Q7. 11.6 does not yet list the watched-file diff or quarantined files, or print a restore hint.
+
 **Done when:**
-- Reading a decoy file shows a desktop alert.
-- A CRITICAL finding pauses Kiro until `resume`.
+- Reading a decoy file shows a desktop alert. Not yet checked by hand.
+- A CRITICAL finding pauses Kiro until `resume`. The pause and resume path is tested (`pausing_the_sandbox_stops_its_processes_until_resumed`). No live finding is CRITICAL yet: the only live findings are decoy reads (HIGH) and proxy findings. WS-AUTOAPPROVE is CRITICAL but is only found after the IDE exits.
 
 ---
 
