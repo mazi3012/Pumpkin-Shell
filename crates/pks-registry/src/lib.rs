@@ -5,6 +5,7 @@
 //! no network, so every rule is tested with fixed inputs.
 
 pub mod age;
+pub mod document;
 pub mod integrity;
 pub mod names;
 pub mod typosquat;
