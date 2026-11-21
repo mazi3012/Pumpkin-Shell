@@ -4,22 +4,29 @@
 //! Routes (all `GET`):
 //! - `/npm/<name>` npm packument. Versions inside the cooldown are removed, and
 //!   tarball links point back at the mirror.
-//! - `/npm/<name>/-/<file>.tgz` tarball, checked against the published checksum.
+//! - `/npm/<name>/-/<file>.tgz` tarball. Refused when OSV has a `MAL-` advisory
+//!   for the version, and served only when it matches its published checksum.
 //! - `/pypi/simple/<project>/` PyPI index (JSON). Young files are removed, and
 //!   file links point back at the mirror.
-//! - `/pypi/packages/<project>/<filename>` file, checked against its sha256.
+//! - `/pypi/packages/<project>/<filename>` file. Checked like a tarball.
 //!
-//! A package whose first release is under 30 days old is refused as a whole
-//! (403, REG-TOO-NEW). Every refusal names the rule in its body. Nothing is
-//! served unless the registry answered 200 for it.
-
-use std::sync::Arc;
+//! The order of checks follows PRD FR-REG: a 404 is logged as
+//! REG-HALLUCINATED; a package first released under 30 days ago is refused
+//! whole (REG-TOO-NEW); a `MAL-` advisory blocks (REG-MALWARE); a version
+//! inside the cooldown is hidden or, when asked for directly, refused
+//! (REG-TOO-NEW); a name close to a popular one is logged (REG-TYPOSQUAT);
+//! checksums are verified before serving (REG-INTEGRITY).
+//!
+//! Every refusal names its rule in the body. Facts the session should record
+//! go in [`Reply::notes`].
 
 use serde_json::Value;
 
 use crate::document::{filter_npm, filter_pypi};
 use crate::integrity::{Verifier, from_npm_dist, from_sha256_hex};
-use crate::names::{percent_decode, valid_npm_name, valid_pypi_name};
+use crate::names::{normalize_pypi, percent_decode, valid_npm_name, valid_pypi_name};
+use crate::osv::{Advisories, Verdict};
+use crate::typosquat::{self, Ecosystem};
 use crate::upstream::UpstreamError;
 
 /// The npm registry the packuments and tarballs come from.
@@ -75,13 +82,24 @@ impl Reply {
 
     fn fail(error: &UpstreamError) -> Self {
         match error {
-            UpstreamError::Status(404) => {
-                Self::refuse(404, "NOT-FOUND", "the registry has no such package")
-            }
             UpstreamError::Refused(why) => Self::refuse(400, "BAD-REQUEST", why),
             other => Self::refuse(502, "UPSTREAM", &other.to_string()),
         }
     }
+}
+
+/// Maps a failed upstream request about a package. A 404 is the package not
+/// existing, which is logged as REG-HALLUCINATED (PRD FR-REG).
+fn package_missing(name: &str, error: &UpstreamError) -> Option<Reply> {
+    matches!(error, UpstreamError::Status(404)).then(|| {
+        let mut reply = Reply::refuse(
+            404,
+            "REG-HALLUCINATED",
+            &format!("{name} does not exist on the registry"),
+        );
+        reply.notes.push(format!("REG-HALLUCINATED {name}"));
+        reply
+    })
 }
 
 /// The mirror. `base` is how a client reaches the mirror, for example
@@ -90,21 +108,29 @@ pub struct Mirror<S: Source> {
     source: S,
     base: String,
     clock: Box<dyn Fn() -> i64 + Send + Sync>,
+    advisories: Box<dyn Advisories>,
 }
 
 /// A parsed npm packument, filtered, with the original tarball links.
 struct NpmDoc {
+    name: String,
     doc: Value,
     notes: Vec<String>,
 }
 
 impl<S: Source> Mirror<S> {
     /// Builds a mirror. `base` is the mirror's own address as clients see it.
-    pub fn new(source: S, base: &str, clock: Box<dyn Fn() -> i64 + Send + Sync>) -> Self {
+    pub fn new(
+        source: S,
+        base: &str,
+        clock: Box<dyn Fn() -> i64 + Send + Sync>,
+        advisories: Box<dyn Advisories>,
+    ) -> Self {
         Self {
             source,
             base: base.trim_end_matches('/').to_owned(),
             clock,
+            advisories,
         }
     }
 
@@ -141,7 +167,10 @@ impl<S: Source> Mirror<S> {
             ));
         }
         let url = format!("{NPM_REGISTRY}/{}", name.replace('/', "%2f"));
-        let raw = self.source.fetch(&url, None).map_err(|e| Reply::fail(&e))?;
+        let raw = self
+            .source
+            .fetch(&url, None)
+            .map_err(|e| package_missing(&name, &e).unwrap_or_else(|| Reply::fail(&e)))?;
         let mut doc: Value = serde_json::from_slice(&raw).map_err(|_| {
             Reply::refuse(
                 502,
@@ -163,7 +192,7 @@ impl<S: Source> Mirror<S> {
                 &format!("{name} was first released less than 30 days ago; the package is blocked"),
             ));
         }
-        let notes = report
+        let mut notes: Vec<String> = report
             .install_scripts
             .iter()
             .map(|s| format!("REG-INSTALL-SCRIPT {s}"))
@@ -174,7 +203,10 @@ impl<S: Source> Mirror<S> {
                     .map(|v| format!("REG-COOLDOWN {name}@{v} hidden")),
             )
             .collect();
-        Ok(NpmDoc { doc, notes })
+        if let Some(popular) = typosquat::check(Ecosystem::Npm, &name) {
+            notes.push(format!("REG-TYPOSQUAT {name} resembles {popular}"));
+        }
+        Ok(NpmDoc { name, doc, notes })
     }
 
     fn npm_packument(&self, name_part: &str) -> Reply {
@@ -182,7 +214,6 @@ impl<S: Source> Mirror<S> {
             Ok(parsed) => parsed,
             Err(reply) => return reply,
         };
-        let encoded = name_part.to_owned();
         if let Some(versions) = parsed
             .doc
             .get_mut("versions")
@@ -193,7 +224,7 @@ impl<S: Source> Mirror<S> {
                     && let Some(tarball) = dist.get("tarball").and_then(Value::as_str)
                     && let Some(file) = tarball.rsplit('/').next()
                 {
-                    let link = format!("{}/npm/{encoded}/-/{file}", self.base);
+                    let link = format!("{}/npm/{name_part}/-/{file}", self.base);
                     dist.insert("tarball".to_owned(), Value::String(link));
                 }
             }
@@ -211,23 +242,30 @@ impl<S: Source> Mirror<S> {
             Ok(parsed) => parsed,
             Err(reply) => return reply,
         };
-        let versions = parsed.doc.get("versions").and_then(Value::as_object);
-        let found = versions.and_then(|all| {
-            all.values().find(|meta| {
-                meta.get("dist")
-                    .and_then(|d| d.get("tarball"))
-                    .and_then(Value::as_str)
-                    .and_then(|t| t.rsplit('/').next())
-                    == Some(file)
-            })
+        let all = parsed.doc.get("versions").and_then(Value::as_object);
+        let found = all.and_then(|all| {
+            all.iter()
+                .find(|(_, meta)| {
+                    meta.get("dist")
+                        .and_then(|d| d.get("tarball"))
+                        .and_then(Value::as_str)
+                        .and_then(|t| t.rsplit('/').next())
+                        == Some(file)
+                })
+                .map(|(version, meta)| (version.clone(), meta.clone()))
         });
-        let Some(meta) = found else {
+        let Some((version, meta)) = found else {
             return Reply::refuse(
                 403,
-                "REG-COOLDOWN",
-                "this version is hidden: it is inside the 72-hour cooldown or unknown",
+                "REG-TOO-NEW",
+                "this version is inside the 72-hour cooldown or unknown; a lockfile that pins it is blocked until it is older",
             );
         };
+        let verdict = self.advisories.check("npm", &parsed.name, &version);
+        let mut notes = parsed.notes.clone();
+        if let Some(blocked) = malware_block(&verdict, &parsed.name, &version, &mut notes) {
+            return blocked;
+        }
         let Some(dist) = meta.get("dist") else {
             return Reply::refuse(502, "UPSTREAM", "the version has no dist section");
         };
@@ -249,10 +287,10 @@ impl<S: Source> Mirror<S> {
             Ok(bytes) => bytes,
             Err(error) => return Reply::fail(&error),
         };
-        verified(&expected, &bytes, BINARY)
+        with_notes(verified(&expected, &bytes, BINARY), notes)
     }
 
-    fn pypi_document(&self, project: &str) -> Result<Value, Reply> {
+    fn pypi_document(&self, project: &str) -> Result<(String, Value, Vec<String>), Reply> {
         if !valid_pypi_name(project) {
             return Err(Reply::refuse(
                 400,
@@ -264,7 +302,7 @@ impl<S: Source> Mirror<S> {
         let raw = self
             .source
             .fetch(&url, Some(PYPI_JSON))
-            .map_err(|e| Reply::fail(&e))?;
+            .map_err(|e| package_missing(project, &e).unwrap_or_else(|| Reply::fail(&e)))?;
         let mut doc: Value = serde_json::from_slice(&raw)
             .map_err(|_| Reply::refuse(502, "UPSTREAM", "the registry did not send an index"))?;
         let report = filter_pypi(&mut doc, (self.clock)())
@@ -278,20 +316,28 @@ impl<S: Source> Mirror<S> {
                 ),
             ));
         }
-        Ok(doc)
-    }
-
-    fn pypi_index(&self, rest: &str) -> Reply {
-        let project = rest.trim_end_matches('/');
-        let mut doc = match self.pypi_document(project) {
-            Ok(doc) => doc,
-            Err(reply) => return reply,
-        };
         let name = doc
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or(project)
             .to_owned();
+        let mut notes: Vec<String> = report
+            .hidden_files
+            .iter()
+            .map(|f| format!("REG-COOLDOWN {f} hidden"))
+            .collect();
+        if let Some(popular) = typosquat::check(Ecosystem::PyPi, &normalize_pypi(&name)) {
+            notes.push(format!("REG-TYPOSQUAT {name} resembles {popular}"));
+        }
+        Ok((name, doc, notes))
+    }
+
+    fn pypi_index(&self, rest: &str) -> Reply {
+        let project = rest.trim_end_matches('/');
+        let (name, mut doc, notes) = match self.pypi_document(project) {
+            Ok(parsed) => parsed,
+            Err(reply) => return reply,
+        };
         if let Some(files) = doc.get_mut("files").and_then(Value::as_array_mut) {
             for file in files {
                 let Some(filename) = file
@@ -309,6 +355,7 @@ impl<S: Source> Mirror<S> {
         }
         let mut reply = Reply::json(200, &doc);
         reply.content_type = PYPI_JSON;
+        reply.notes = notes;
         reply
     }
 
@@ -319,8 +366,8 @@ impl<S: Source> Mirror<S> {
         if filename.contains('/') || filename.is_empty() {
             return Reply::refuse(400, "BAD-REQUEST", "not a file name");
         }
-        let doc = match self.pypi_document(project) {
-            Ok(doc) => doc,
+        let (name, doc, notes) = match self.pypi_document(project) {
+            Ok(parsed) => parsed,
             Err(reply) => return reply,
         };
         let entry = doc
@@ -334,10 +381,24 @@ impl<S: Source> Mirror<S> {
         let Some(entry) = entry else {
             return Reply::refuse(
                 403,
-                "REG-COOLDOWN",
-                "this file is hidden: it is inside the 72-hour cooldown or unknown",
+                "REG-TOO-NEW",
+                "this file is inside the 72-hour cooldown or unknown; a lockfile that pins it is blocked until it is older",
             );
         };
+        if let Some(version) = crate::document::pypi_version_of(filename) {
+            let verdict = self
+                .advisories
+                .check("PyPI", &normalize_pypi(&name), &version);
+            let mut notes = notes.clone();
+            if let Some(blocked) = malware_block(&verdict, &name, &version, &mut notes) {
+                return blocked;
+            }
+            return self.pypi_bytes(entry, notes);
+        }
+        self.pypi_bytes(entry, notes)
+    }
+
+    fn pypi_bytes(&self, entry: &Value, notes: Vec<String>) -> Reply {
         let Some(url) = entry.get("url").and_then(Value::as_str).map(str::to_owned) else {
             return Reply::refuse(502, "UPSTREAM", "the file has no URL");
         };
@@ -356,8 +417,38 @@ impl<S: Source> Mirror<S> {
             Ok(bytes) => bytes,
             Err(error) => return Reply::fail(&error),
         };
-        verified(&expected, &bytes, BINARY)
+        with_notes(verified(&expected, &bytes, BINARY), notes)
     }
+}
+
+/// The reply that blocks a version with a malware advisory, or `None` to go on.
+/// An unknown verdict (OSV unreachable) goes on and is recorded as unchecked.
+fn malware_block(
+    verdict: &Verdict,
+    name: &str,
+    version: &str,
+    notes: &mut Vec<String>,
+) -> Option<Reply> {
+    match verdict {
+        Verdict::Clean => None,
+        Verdict::Malware(ids) => Some(Reply::refuse(
+            403,
+            "REG-MALWARE",
+            &format!(
+                "{name}@{version} has a malware advisory ({}); it is blocked",
+                ids.join(", ")
+            ),
+        )),
+        Verdict::Unknown(why) => {
+            notes.push(format!("REG-MALWARE {name}@{version} not checked: {why}"));
+            None
+        }
+    }
+}
+
+fn with_notes(mut reply: Reply, notes: Vec<String>) -> Reply {
+    reply.notes.extend(notes);
+    reply
 }
 
 /// Serves `bytes` only when they match the published checksum.
@@ -384,15 +475,11 @@ fn verified(
     }
 }
 
-/// A mirror shared between connections.
-pub type SharedMirror<S> = Arc<Mirror<S>>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use sha1::Digest as _;
     use std::collections::HashMap;
-    use std::sync::Mutex;
 
     const NOW: i64 = 1_800_000_000;
     const DAY: i64 = 86_400;
@@ -413,12 +500,11 @@ mod tests {
         bytes.iter().map(|b| format!("{b:02x}")).collect()
     }
 
-    /// A registry that answers from a fixed map. It records each request, and
-    /// refuses PyPI index requests that do not ask for the JSON type.
+    /// A registry that answers from a fixed map. Unknown URLs are a 404, and a
+    /// PyPI index asked without the JSON type is refused.
     #[derive(Default)]
     struct Fake {
         answers: HashMap<String, Vec<u8>>,
-        requests: Mutex<Vec<String>>,
     }
 
     impl Fake {
@@ -430,9 +516,6 @@ mod tests {
 
     impl Source for Fake {
         fn fetch(&self, url: &str, accept: Option<&str>) -> Result<Vec<u8>, UpstreamError> {
-            if let Ok(mut log) = self.requests.lock() {
-                log.push(url.to_owned());
-            }
             if url.starts_with(PYPI_INDEX) && accept != Some(PYPI_JSON) {
                 return Err(UpstreamError::Refused(
                     "the index must be asked as JSON".to_owned(),
@@ -445,28 +528,66 @@ mod tests {
         }
     }
 
+    /// Advisories with one malware version, and everything else clean.
+    struct Malware {
+        name: &'static str,
+        version: &'static str,
+    }
+
+    impl Advisories for Malware {
+        fn check(&self, _eco: &str, name: &str, version: &str) -> Verdict {
+            if name == self.name && version == self.version {
+                Verdict::Malware(vec!["MAL-2026-0001".to_owned()])
+            } else {
+                Verdict::Clean
+            }
+        }
+    }
+
+    /// OSV that cannot be reached.
+    struct Unreachable;
+
+    impl Advisories for Unreachable {
+        fn check(&self, _: &str, _: &str, _: &str) -> Verdict {
+            Verdict::Unknown("offline".to_owned())
+        }
+    }
+
+    fn clean() -> Box<dyn Advisories> {
+        Box::new(Malware {
+            name: "",
+            version: "",
+        })
+    }
+
+    fn mirror_with(fake: Fake, advisories: Box<dyn Advisories>) -> Mirror<Fake> {
+        Mirror::new(fake, BASE, Box::new(|| NOW), advisories)
+    }
+
     fn mirror(fake: Fake) -> Mirror<Fake> {
-        Mirror::new(fake, BASE, Box::new(|| NOW))
+        mirror_with(fake, clean())
     }
 
     fn json(reply: &Reply) -> Value {
         serde_json::from_slice(&reply.body).unwrap_or(Value::Null)
     }
 
-    fn npm_doc(name: &str, tarball: &str, shasum: &str, scripts: bool) -> Vec<u8> {
-        let mut meta = serde_json::json!({
+    /// A packument with 1.0.0 (old, visible) and 2.0.0 (new, hidden). The
+    /// install script, when asked for, is on 1.0.0, the version a client gets.
+    fn npm_doc(name: &str, shasum: &str, scripts: bool) -> Vec<u8> {
+        let mut old = serde_json::json!({
             "name": name,
-            "dist": { "tarball": tarball, "shasum": shasum },
+            "dist": { "tarball": format!("https://registry.npmjs.org/{name}/-/{name}-1.0.0.tgz"), "shasum": shasum },
         });
         if scripts {
-            meta["scripts"] = serde_json::json!({ "postinstall": "node install.js" });
+            old["scripts"] = serde_json::json!({ "postinstall": "node install.js" });
         }
         serde_json::json!({
             "name": name,
             "dist-tags": { "latest": "2.0.0" },
             "versions": {
-                "1.0.0": { "name": name, "dist": { "tarball": format!("https://registry.npmjs.org/{name}/-/{name}-1.0.0.tgz"), "shasum": shasum } },
-                "2.0.0": meta,
+                "1.0.0": old,
+                "2.0.0": { "name": name, "dist": { "tarball": format!("https://registry.npmjs.org/{name}/-/{name}-2.0.0.tgz"), "shasum": shasum } },
             },
             "time": {
                 "created": ago(200 * DAY),
@@ -480,16 +601,10 @@ mod tests {
 
     #[test]
     fn a_packument_hides_the_cooldown_version_and_links_back_to_the_mirror() {
-        let tarball_1 = b"tarball one";
-        let shasum = hex(&sha1::Sha1::digest(tarball_1));
+        let shasum = hex(&sha1::Sha1::digest(b"tarball one"));
         let fake = Fake::default().with(
             "https://registry.npmjs.org/pkg",
-            npm_doc(
-                "pkg",
-                "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
-                &shasum,
-                true,
-            ),
+            npm_doc("pkg", &shasum, true),
         );
         let reply = mirror(fake).handle("/npm/pkg");
         assert_eq!(reply.status, 200);
@@ -508,6 +623,12 @@ mod tests {
                 .iter()
                 .any(|n| n.starts_with("REG-COOLDOWN pkg@2.0.0"))
         );
+        assert!(
+            reply
+                .notes
+                .iter()
+                .any(|n| n == "REG-INSTALL-SCRIPT pkg@1.0.0")
+        );
     }
 
     #[test]
@@ -519,8 +640,8 @@ mod tests {
             "time": { "created": ago(3 * DAY), "1.0.0": ago(3 * DAY) },
         })
         .to_string();
-        let fake = Fake::default().with("https://registry.npmjs.org/fresh", body);
-        let reply = mirror(fake).handle("/npm/fresh");
+        let reply = mirror(Fake::default().with("https://registry.npmjs.org/fresh", body))
+            .handle("/npm/fresh");
         assert_eq!(reply.status, 403);
         assert!(json(&reply)["rule"] == "REG-TOO-NEW");
     }
@@ -532,12 +653,7 @@ mod tests {
         let fake = Fake::default()
             .with(
                 "https://registry.npmjs.org/pkg",
-                npm_doc(
-                    "pkg",
-                    "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
-                    &shasum,
-                    false,
-                ),
+                npm_doc("pkg", &shasum, false),
             )
             .with(
                 "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
@@ -554,12 +670,7 @@ mod tests {
         let fake = Fake::default()
             .with(
                 "https://registry.npmjs.org/pkg",
-                npm_doc(
-                    "pkg",
-                    "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
-                    &shasum,
-                    false,
-                ),
+                npm_doc("pkg", &shasum, false),
             )
             .with(
                 "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
@@ -572,17 +683,12 @@ mod tests {
     }
 
     #[test]
-    fn a_tarball_of_a_hidden_version_is_refused() {
+    fn a_tarball_of_a_hidden_version_is_refused_as_too_new() {
         let shasum = hex(&sha1::Sha1::digest(b"x"));
         let fake = Fake::default()
             .with(
                 "https://registry.npmjs.org/pkg",
-                npm_doc(
-                    "pkg",
-                    "https://registry.npmjs.org/pkg/-/pkg-2.0.0.tgz",
-                    &shasum,
-                    false,
-                ),
+                npm_doc("pkg", &shasum, false),
             )
             .with(
                 "https://registry.npmjs.org/pkg/-/pkg-2.0.0.tgz",
@@ -590,13 +696,89 @@ mod tests {
             );
         let reply = mirror(fake).handle("/npm/pkg/-/pkg-2.0.0.tgz");
         assert_eq!(reply.status, 403);
-        assert!(json(&reply)["rule"] == "REG-COOLDOWN");
+        assert!(json(&reply)["rule"] == "REG-TOO-NEW");
     }
 
     #[test]
-    fn unknown_packages_and_routes_are_reported_and_bad_names_are_refused() {
+    fn a_malware_version_is_refused_with_its_advisory_and_other_versions_are_served() {
+        let bytes = b"tarball one";
+        let shasum = hex(&sha1::Sha1::digest(bytes));
+        let fake = Fake::default()
+            .with(
+                "https://registry.npmjs.org/pkg",
+                npm_doc("pkg", &shasum, false),
+            )
+            .with(
+                "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
+                bytes.to_vec(),
+            );
+        let m = mirror_with(
+            fake,
+            Box::new(Malware {
+                name: "pkg",
+                version: "1.0.0",
+            }),
+        );
+        let reply = m.handle("/npm/pkg/-/pkg-1.0.0.tgz");
+        assert_eq!(reply.status, 403);
+        assert!(json(&reply)["rule"] == "REG-MALWARE");
+        assert!(String::from_utf8_lossy(&reply.body).contains("MAL-2026-0001"));
+    }
+
+    #[test]
+    fn when_osv_cannot_be_reached_the_version_is_served_and_recorded_as_unchecked() {
+        let bytes = b"tarball one";
+        let shasum = hex(&sha1::Sha1::digest(bytes));
+        let fake = Fake::default()
+            .with(
+                "https://registry.npmjs.org/pkg",
+                npm_doc("pkg", &shasum, false),
+            )
+            .with(
+                "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz",
+                bytes.to_vec(),
+            );
+        let reply = mirror_with(fake, Box::new(Unreachable)).handle("/npm/pkg/-/pkg-1.0.0.tgz");
+        assert_eq!(reply.status, 200);
+        assert!(
+            reply
+                .notes
+                .iter()
+                .any(|n| n.starts_with("REG-MALWARE pkg@1.0.0 not checked"))
+        );
+    }
+
+    #[test]
+    fn a_name_that_does_not_exist_is_logged_as_hallucinated() {
+        let reply = mirror(Fake::default()).handle("/npm/pks-no-such-package-xyz");
+        assert_eq!(reply.status, 404);
+        assert!(json(&reply)["rule"] == "REG-HALLUCINATED");
+        assert_eq!(
+            reply.notes,
+            vec!["REG-HALLUCINATED pks-no-such-package-xyz".to_owned()]
+        );
+    }
+
+    #[test]
+    fn a_name_close_to_a_popular_one_is_logged_as_a_typosquat_warning() {
+        let shasum = hex(&sha1::Sha1::digest(b"x"));
+        let fake = Fake::default().with(
+            "https://registry.npmjs.org/expresss",
+            npm_doc("expresss", &shasum, false),
+        );
+        let reply = mirror(fake).handle("/npm/expresss");
+        assert_eq!(reply.status, 200, "a warning does not block");
+        assert!(
+            reply
+                .notes
+                .iter()
+                .any(|n| n == "REG-TYPOSQUAT expresss resembles express")
+        );
+    }
+
+    #[test]
+    fn unknown_routes_and_bad_names_are_refused() {
         let m = mirror(Fake::default());
-        assert_eq!(m.handle("/npm/nothere").status, 404);
         assert_eq!(m.handle("/elsewhere").status, 404);
         assert_eq!(m.handle("/npm/..%2fetc%2fpasswd").status, 400);
         assert_eq!(m.handle("/npm/a%3fb").status, 400);
@@ -615,8 +797,8 @@ mod tests {
             ],
         })
         .to_string();
-        let fake = Fake::default().with("https://pypi.org/simple/requests/", index);
-        let reply = mirror(fake).handle("/pypi/simple/requests/");
+        let reply = mirror(Fake::default().with("https://pypi.org/simple/requests/", index))
+            .handle("/pypi/simple/requests/");
         assert_eq!(reply.status, 200);
         assert_eq!(reply.content_type, PYPI_JSON);
         let doc = json(&reply);
@@ -673,8 +855,7 @@ mod tests {
             ],
         })
         .to_string();
-        let fake = Fake::default().with("https://pypi.org/simple/pkg/", index);
-        let m = mirror(fake);
+        let m = mirror(Fake::default().with("https://pypi.org/simple/pkg/", index));
         assert_eq!(m.handle("/pypi/packages/pkg/pkg-2.0.tar.gz").status, 403);
 
         let fresh = serde_json::json!({
@@ -683,9 +864,34 @@ mod tests {
             "files": [{ "filename": "fresh-1.0.tar.gz", "url": "https://files.pythonhosted.org/f", "upload-time": ago(2 * DAY), "hashes": { "sha256": "00" } }],
         })
         .to_string();
-        let fake = Fake::default().with("https://pypi.org/simple/fresh/", fresh);
-        let reply = mirror(fake).handle("/pypi/simple/fresh/");
+        let reply = mirror(Fake::default().with("https://pypi.org/simple/fresh/", fresh))
+            .handle("/pypi/simple/fresh/");
         assert_eq!(reply.status, 403);
         assert!(json(&reply)["rule"] == "REG-TOO-NEW");
+    }
+
+    #[test]
+    fn a_pypi_malware_file_is_refused() {
+        let bytes = b"bad wheel";
+        let sha = hex(&sha2::Sha256::digest(bytes));
+        let index = serde_json::json!({
+            "name": "evil",
+            "versions": ["9.0"],
+            "files": [{ "filename": "evil-9.0.tar.gz", "url": "https://files.pythonhosted.org/e", "upload-time": ago(100 * DAY), "hashes": { "sha256": sha } }],
+        })
+        .to_string();
+        let fake = Fake::default()
+            .with("https://pypi.org/simple/evil/", index)
+            .with("https://files.pythonhosted.org/e", bytes.to_vec());
+        let m = mirror_with(
+            fake,
+            Box::new(Malware {
+                name: "evil",
+                version: "9.0",
+            }),
+        );
+        let reply = m.handle("/pypi/packages/evil/evil-9.0.tar.gz");
+        assert_eq!(reply.status, 403);
+        assert!(json(&reply)["rule"] == "REG-MALWARE");
     }
 }

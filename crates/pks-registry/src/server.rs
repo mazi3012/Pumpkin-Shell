@@ -151,6 +151,14 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::sync::Mutex;
 
+    /// OSV that has no malware to report.
+    struct CleanAdvisories;
+    impl crate::osv::Advisories for CleanAdvisories {
+        fn check(&self, _: &str, _: &str, _: &str) -> crate::osv::Verdict {
+            crate::osv::Verdict::Clean
+        }
+    }
+
     /// A registry with one old version and one that is too new.
     struct OneOld;
     impl Source for OneOld {
@@ -194,6 +202,7 @@ mod tests {
             OneOld,
             "http://127.0.0.1:3130",
             Box::new(|| 1_800_000_000),
+            Box::new(CleanAdvisories),
         ));
         let notes = Arc::new(Mutex::new(Vec::new()));
         let sink = Arc::clone(&notes);

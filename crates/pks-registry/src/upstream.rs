@@ -6,15 +6,17 @@
 //! did not give it. The response body is limited in size.
 
 use http::{Request, StatusCode, Uri};
-use http_body_util::{BodyExt, Empty, Limited};
+use http_body_util::{BodyExt, Empty, Full, Limited};
 use hyper::body::Bytes;
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
 
-/// The only hosts the mirror connects to.
+/// The only hosts the mirror downloads from.
 pub const ALLOWED_HOSTS: [&str; 3] = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org"];
+/// The one host the mirror POSTs to: the OSV vulnerability query (PRD FR-REG check 3).
+pub const OSV_HOST: &str = "api.osv.dev";
 /// Largest response body accepted (a large wheel is well under this).
 pub const MAX_BODY: usize = 128 * 1024 * 1024;
 
@@ -49,6 +51,15 @@ impl std::fmt::Display for UpstreamError {
 /// # Errors
 /// Refuses every other URL before anything is connected.
 pub fn check_url(url: &str) -> Result<Uri, UpstreamError> {
+    check_url_for(url, &ALLOWED_HOSTS)
+}
+
+/// [`check_url`] for a given set of hosts.
+///
+/// # Errors
+/// Refuses any URL that is not https on one of `hosts`, port 443, no user
+/// information.
+pub fn check_url_for(url: &str, hosts: &[&str]) -> Result<Uri, UpstreamError> {
     let uri: Uri = url
         .parse()
         .map_err(|_| UpstreamError::Refused("not a valid URL".to_owned()))?;
@@ -64,7 +75,7 @@ pub fn check_url(url: &str) -> Result<Uri, UpstreamError> {
         ));
     }
     let host = authority.host();
-    if !ALLOWED_HOSTS.contains(&host) {
+    if !hosts.contains(&host) {
         return Err(UpstreamError::Refused(format!(
             "{host} is not a registry the mirror uses"
         )));
@@ -85,6 +96,7 @@ type Connector = HttpsConnector<HttpConnector>;
 pub struct Upstream {
     runtime: tokio::runtime::Runtime,
     client: Client<Connector, Empty<Bytes>>,
+    post_client: Client<Connector, Full<Bytes>>,
 }
 
 impl Upstream {
@@ -103,9 +115,50 @@ impl Upstream {
             .enable_all()
             .build()
             .map_err(|e| UpstreamError::Transport(format!("runtime: {e}")))?;
+        let post_connector = HttpsConnectorBuilder::new()
+            .with_native_roots()
+            .map_err(|e| UpstreamError::Transport(format!("trust roots: {e}")))?
+            .https_only()
+            .enable_http1()
+            .build();
         Ok(Self {
             runtime,
             client: Client::builder(TokioExecutor::new()).build(connector),
+            post_client: Client::builder(TokioExecutor::new()).build(post_connector),
+        })
+    }
+
+    /// Sends a JSON `POST` to the OSV query endpoint and returns the body. Only
+    /// a 200 answer counts, and only [`OSV_HOST`] is reachable this way.
+    ///
+    /// # Errors
+    /// Refuses any other URL before connecting; the same errors as [`Upstream::get`].
+    pub fn post_json(&self, url: &str, json: &str) -> Result<Vec<u8>, UpstreamError> {
+        let uri = check_url_for(url, &[OSV_HOST])?;
+        let request = Request::post(uri)
+            .header(http::header::CONTENT_TYPE, "application/json")
+            .body(Full::new(Bytes::from(json.to_owned())))
+            .map_err(|e| UpstreamError::Transport(format!("request: {e}")))?;
+        self.runtime.block_on(async {
+            let response = self
+                .post_client
+                .request(request)
+                .await
+                .map_err(|e| UpstreamError::Transport(e.to_string()))?;
+            if response.status() != StatusCode::OK {
+                return Err(UpstreamError::Status(response.status().as_u16()));
+            }
+            let body = Limited::new(response.into_body(), MAX_BODY)
+                .collect()
+                .await
+                .map_err(|e| {
+                    if e.is::<http_body_util::LengthLimitError>() {
+                        UpstreamError::TooLarge
+                    } else {
+                        UpstreamError::Transport(e.to_string())
+                    }
+                })?;
+            Ok(body.to_bytes().to_vec())
         })
     }
 
@@ -172,6 +225,19 @@ mod tests {
         ] {
             assert!(check_url(url).is_ok(), "{url}");
         }
+    }
+
+    #[test]
+    fn the_osv_host_is_reachable_for_post_only_and_nothing_else_is() {
+        assert!(check_url_for("https://api.osv.dev/v1/query", &[OSV_HOST]).is_ok());
+        assert!(matches!(
+            check_url("https://api.osv.dev/v1/query"),
+            Err(UpstreamError::Refused(_))
+        ));
+        assert!(matches!(
+            check_url_for("https://pypi.org/simple/", &[OSV_HOST]),
+            Err(UpstreamError::Refused(_))
+        ));
     }
 
     #[test]
