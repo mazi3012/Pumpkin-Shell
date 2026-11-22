@@ -451,6 +451,40 @@ fn decode_sockaddr(bytes: &[u8]) -> Option<SockAddr> {
     }
 }
 
+/// The TCP ports that have a listener in the network namespace of `pid`,
+/// read from `/proc/<pid>/net/tcp` and `tcp6`. A connection to one of them is
+/// the program talking to a service it runs itself. Empty when unreadable.
+#[must_use]
+pub fn listening_ports(pid: i32) -> Vec<u16> {
+    let mut ports = Vec::new();
+    for file in ["tcp", "tcp6"] {
+        if let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/net/{file}")) {
+            ports.extend(parse_listening(&text));
+        }
+    }
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+/// Parses the LISTEN rows (state `0A`) of a `/proc/net/tcp` table.
+fn parse_listening(table: &str) -> Vec<u16> {
+    table
+        .lines()
+        .skip(1)
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split_whitespace().collect();
+            let local = fields.get(1)?;
+            let state = fields.get(3)?;
+            if *state != "0A" {
+                return None;
+            }
+            let (_, port) = local.rsplit_once(':')?;
+            u16::from_str_radix(port, 16).ok()
+        })
+        .collect()
+}
+
 /// Reads `len` bytes of the sandbox process's memory at `addr`.
 fn read_bytes(pid: i32, addr: u64, len: usize) -> io::Result<Vec<u8>> {
     let memory = File::open(format!("/proc/{pid}/mem"))?;
@@ -600,6 +634,12 @@ mod tests {
         assert_eq!(decode_sockaddr(&[1, 0, b'/', 0]), Some(SockAddr::Unix));
         assert_eq!(decode_sockaddr(&[16, 0, 0, 0]), Some(SockAddr::Other(16)));
         assert_eq!(decode_sockaddr(&[2]), None);
+    }
+
+    #[test]
+    fn only_listening_rows_give_ports() {
+        let table = "  sl  local_address rem_address   st tx_queue rx_queue\n   0: 0100007F:0BD0 00000000:0000 0A 00000000:00000000\n   1: 0100007F:1F90 0100007F:9C40 01 00000000:00000000\n   2: 00000000:0016 00000000:0000 0A 00000000:00000000\n";
+        assert_eq!(parse_listening(table), vec![0x0BD0, 0x0016]);
     }
 
     #[test]
