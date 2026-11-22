@@ -203,6 +203,15 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 - Key stored outside the sandbox, in the host data dir (mode 0700 directory, 0600 key). Verification takes the public key from there, never from the log.
 - Signed checkpoint at session end (entry count and hash of the last line) detects truncation. A log with no checkpoint fails `log verify` unless `--allow-open` is given. `log verify` checks chain, signatures, checkpoint.
 
+### FR-DASH: Local dashboard (added 2026-11-22, after the first release)
+- `pumpkin-shell dashboard` serves a live page of sessions and findings on `127.0.0.1` only. A bind address other than loopback is refused.
+- Read-only. It answers GET requests. It has no buttons for approve, resume or kill: those stay in the CLI.
+- It accepts only the `Host` headers `127.0.0.1:<port>` and `localhost:<port>`, against DNS rebinding.
+- Data comes from the session logs. Each log is checked with the same chain and signature checks as `log verify`, and the page shows the result.
+- The page shows: live findings by severity and rule; network targets (layer `net`); blocked packages (layer `registry`); decoy reads (`fs`); staged writes (`ws`); monitor events (`exec`, `net`, `sbx`); and each session's status.
+- It loads no external script, style or font, and sends nothing off the machine. It refreshes by polling every 2 seconds.
+- The sandbox cannot reach the dashboard: it has no route to the host's loopback except the listed host ports.
+
 ### CLI
 `doctor`, `init`, `ide <kiro|code|cursor|windsurf> [path]`, `ide import <ide>` (settings + extensions, never tokens), `watch`, `allow`, `allow-write`, `resume`, `kill`, `review`, `restore`, `scan [--ci]`, `trust`, `policy check`, `policy suggest`, `log [verify]`, `test`.
 

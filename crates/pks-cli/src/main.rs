@@ -6,6 +6,7 @@ mod ask;
 mod broker;
 #[cfg(target_os = "linux")]
 mod clipboard;
+mod dashboard;
 mod doctor;
 mod ide;
 mod log;
@@ -58,6 +59,18 @@ enum Command {
         /// .gitignore can otherwise hide tracked files from the scan.
         #[arg(long)]
         no_ignore: bool,
+    },
+    /// Live, read-only dashboard of sessions and findings on this machine.
+    Dashboard {
+        /// Port on 127.0.0.1 to serve the page on.
+        #[arg(long, default_value_t = dashboard::DEFAULT_PORT)]
+        port: u16,
+    },
+    /// Open a repository in Kiro inside the sandbox. Same as 'ide kiro'.
+    Kiro {
+        /// Repository to open.
+        #[arg(default_value = ".")]
+        path: PathBuf,
     },
     /// Open a repository in an IDE that runs inside the sandbox.
     Ide {
@@ -254,6 +267,8 @@ fn main() -> ExitCode {
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
         Some(Command::Ide { ide, path }) => ide::run(ide, &path),
+        Some(Command::Kiro { path }) => ide::run(ide::Ide::Kiro, &path),
+        Some(Command::Dashboard { port }) => dashboard::run(port),
         Some(Command::SandboxInit {
             rw,
             ro,

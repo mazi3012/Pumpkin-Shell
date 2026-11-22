@@ -82,7 +82,24 @@ Optional, for nicer alerts: `zenity` (popups), `xclip` (clipboard) and
 The sandbox displays the IDE through X11. A Wayland desktop works only if
 XWayland is running. This has not been tested yet.
 
-### Option 1: install the Debian package (Ubuntu 24.04+, Debian 13+)
+### Quick install (Ubuntu, Debian, Linux Mint)
+
+You need [cosign](https://github.com/sigstore/cosign/releases) to check the
+download. Then run:
+
+```sh
+git clone https://github.com/mazi3012/Pumpkin-Shell.git
+cd Pumpkin-Shell
+packaging/install.sh 1.0.0
+pumpkin-shell doctor
+```
+
+The script downloads the package and its signature, checks the signature, and
+only then installs it with `apt` (it asks for your password). If the check
+fails, nothing is installed. To check the download without installing, add
+`--check-only`. Read the script first if you want to: it is short.
+
+### Option 1: install the Debian package by hand (Ubuntu 24.04+, Debian 13+)
 
 1. Download `pumpkin-shell_1.0.0_amd64.deb` from the
    [Releases page](https://github.com/mazi3012/pumpkin-shell/releases).
@@ -169,8 +186,11 @@ in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and
 Open a project in the sandboxed Kiro:
 
 ```sh
-pumpkin-shell ide kiro ~/my-project
+pumpkin-shell kiro ~/my-project
 ```
+
+(`pumpkin-shell ide kiro ~/my-project` does the same.) VS Code, Cursor and
+Windsurf are after the first release.
 
 A window opens with Kiro. Watch the terminal you started it from: it prints
 alerts, and it asks you when a site is not on the allowlist.
@@ -179,7 +199,8 @@ alerts, and it asks you when a site is not on the allowlist.
 |---|---|
 | `pumpkin-shell doctor` | Checks that this machine can run the sandbox. |
 | `pumpkin-shell scan [PATH]` | Scans a repo for setups that let an agent escape its folder. Use `--ci` in a pipeline. |
-| `pumpkin-shell ide kiro [PATH]` | Opens the project in Kiro inside the sandbox. |
+| `pumpkin-shell kiro [PATH]` | Opens the project in Kiro inside the sandbox. Same as `ide kiro`. |
+| `pumpkin-shell ide kiro [PATH]` | The same, with the IDE name spelled out. |
 | `pumpkin-shell watch` | Shows findings from running sessions (WARN and above). |
 | `pumpkin-shell review SESSION` | Lists staged changes, then approve or reject each one. |
 | `pumpkin-shell allow-write SESSION PATH` | Approves one staged change. |
@@ -189,6 +210,7 @@ alerts, and it asks you when a site is not on the allowlist.
 | `pumpkin-shell trust [PATH]` | Pins the repo's `pumpkin-shell.toml` after you have read it. |
 | `pumpkin-shell policy check [PATH]` | Prints the effective policy for a repo, and fails if the repo policy is not applied or tries to loosen a rule. |
 | `pumpkin-shell log verify FILE` | Checks a session log's chain, signatures and checkpoint. |
+| `pumpkin-shell dashboard [--port N]` | Live read-only page on 127.0.0.1 (default 8765). |
 
 Where things live:
 
@@ -196,6 +218,19 @@ Where things live:
 - Sessions, snapshots and logs: `~/.local/share/pumpkin-shell/sessions/`.
 
 ---
+
+## Live dashboard
+
+```sh
+pumpkin-shell dashboard          # then open http://127.0.0.1:8765/
+```
+
+Pumpkin-Shell Watch shows sessions, findings by severity, network blocks,
+decoy reads, refused packages and each log's check, and refreshes every two
+seconds. It listens on 127.0.0.1 only, is read-only, and loads nothing from the
+internet. A tampered log is shown as failed.
+
+![Pumpkin-Shell Watch](docs/dashboard.png)
 
 ## How it works
 
@@ -299,7 +334,8 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | in progress |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0) |
+| 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 
 The decisions and their reasons are in [docs/DECISIONS.md](docs/DECISIONS.md).

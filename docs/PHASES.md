@@ -28,6 +28,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
 | 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | in-progress (branch `phase-18-release`) |
+| 19 | Local dashboard (after first release) | FR-DASH | Linux | | done (Pumpkin-Shell Watch; tests and screenshot 2026-11-22) |
 
 **First-release scope (set 2026-11-21, see DECISIONS.md):** Linux and Kiro only. Phases 6, 13, 16 and 17 are deferred until after the first release. Phase 6 keeps its number, and it is out of order on purpose. The PRD runs the Windows proof of concept early, so the design can change before anything depends on it. Nothing in the first release waits on Phase 6.
 
@@ -394,6 +395,25 @@ Extra, not in the original list: clipboard copy out and paste in, each after a d
 **Done when:**
 - Install to a protected Kiro session takes under 5 minutes on Ubuntu 24.04.
 - 100% of the escape corpus passes on Linux.
+
+---
+
+## Phase 19: Local dashboard (after the first release)
+
+**Goal:** a live, read-only page on this machine that shows what the sandbox is doing and whether the logs are intact (PRD FR-DASH).
+
+19.1. PRD FR-DASH and this entry (done 2026-11-22).
+19.2 (done). Session index: list sessions, read each signed log, check it with the `log verify` code, and build a summary (pure functions, unit-tested on fixture logs).
+19.3. Loopback HTTP server: `pumpkin-shell dashboard [--port]`. Refuses a non-loopback bind. GET only. Refuses any `Host` header other than the loopback names.
+19.4. Live page: one HTML file with inline script and style, polling a JSON endpoint every 2 seconds. No external resource.
+19.5. Tests: loopback bind enforced; non-GET refused; bad Host refused; summary matches a fixture log; the page contains no `http(s)://` URL other than the local one.
+
+**Done when:**
+- A finding from a running session appears on the page within 3 seconds.
+- The page loads with the network disabled.
+- A tampered log shows as failed on the page.
+
+**Blocked by:** nothing. No new crates; the HTTP handling uses the standard library, like the mirror server.
 
 ---
 
