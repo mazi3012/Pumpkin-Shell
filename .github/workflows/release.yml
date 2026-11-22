@@ -90,6 +90,15 @@ jobs:
         run: |
           cd dist
           echo "digests=$(sha256sum *.deb *.rpm | base64 -w0)" >> "$GITHUB_OUTPUT"
+      - name: Add a stable file name for the Debian package and sign it
+        # Lets the README link to releases/latest/download/pumpkin-shell_amd64.deb
+        # without a version number. The copy is signed with its own bundle.
+        run: |
+          set -eu
+          version="${GITHUB_REF_NAME#v}"
+          cd dist
+          cp "pumpkin-shell_${version}_amd64.deb" pumpkin-shell_amd64.deb
+          cosign sign-blob --yes --bundle pumpkin-shell_amd64.deb.sigstore.json pumpkin-shell_amd64.deb
       - name: Create the release and attach packages and signatures
         env:
           GH_TOKEN: ${{ github.token }}

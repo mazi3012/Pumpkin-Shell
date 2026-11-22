@@ -66,10 +66,49 @@ about what it tried.
 
 ## Install
 
-Ubuntu 24.04, Debian or Linux Mint, on x86_64. Paste the two cells into a
-terminal, one after the other.
+Ubuntu 24.04, Debian or Linux Mint, on a 64-bit Intel or AMD PC. Two steps.
 
-### Cell 1: install Pumpkin-Shell and what it needs
+### Step 1: install Pumpkin-Shell
+
+```sh
+wget https://github.com/mazi3012/Pumpkin-Shell/releases/latest/download/pumpkin-shell_amd64.deb
+sudo apt install ./pumpkin-shell_amd64.deb
+```
+
+`apt` also installs what Pumpkin-Shell needs: bubblewrap, Xephyr and xauth.
+On Ubuntu 24.04 the package also loads its AppArmor profile when the system
+requires it. Kiro is not installed by apt. Get it from
+[kiro.dev](https://kiro.dev/).
+
+### Step 2: open your project in Kiro
+
+```sh
+mkdir -p ~/my-project && git -C ~/my-project init -q && pumpkin-shell kiro ~/my-project
+```
+
+Kiro opens in the sandbox. Use your own project folder in place of
+`~/my-project`.
+
+If something fails, run `pumpkin-shell doctor`. Each FAIL line prints the fix.
+
+The sandbox shows Kiro through X11. Wayland works only through XWayland, which
+has not been tested.
+
+### Advanced
+
+**Check the download (optional).** Each release is signed with Sigstore. Install
+[cosign](https://github.com/sigstore/cosign/releases), then run:
+
+```sh
+wget https://github.com/mazi3012/Pumpkin-Shell/releases/latest/download/pumpkin-shell_amd64.deb.sigstore.json
+cosign verify-blob --bundle pumpkin-shell_amd64.deb.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/mazi3012/[Pp]umpkin-[Ss]hell/.github/workflows/release.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  pumpkin-shell_amd64.deb
+```
+
+**Build from source instead of the package.** This builds the `main` branch
+and installs `pumpkin-shell` to `/usr/local/bin`. Then go to Step 2.
 
 ```sh
 (
@@ -132,30 +171,9 @@ echo "Pumpkin-Shell is installed. Run cell 2 to launch Kiro."
 )
 ```
 
-This installs the system packages it is missing (`bubblewrap`, `xserver-xephyr`,
-`xauth`, and the optional `zenity`, `xclip`, `libnotify-bin` for popups and
-alerts), installs Rust if it is missing, builds Pumpkin-Shell from source and
-puts `pumpkin-shell` in `/usr/local/bin`. It asks for your password once.
-
-Kiro is not installed by apt. Get it from [kiro.dev](https://kiro.dev/) if cell 1
-says it is missing.
-
-### Cell 2: launch Kiro in the sandbox
-
-```sh
-PROJECT="$HOME/my-project"
-mkdir -p "$PROJECT"
-[ -d "$PROJECT/.git" ] || git -C "$PROJECT" init -q
-pumpkin-shell kiro "$PROJECT"
-```
-
-This opens `~/my-project` in Kiro. Replace the path with your own project to
-open that one instead.
-
-If `doctor` shows a FAIL line, the line prints the fix to run.
-
-The sandbox shows Kiro through X11. Wayland works only through XWayland, which
-has not been tested.
+The release notes and the escape corpus are in
+[docs/ESCAPE-CORPUS.md](docs/ESCAPE-CORPUS.md) and
+[docs/THREAT-MODEL.md](docs/THREAT-MODEL.md).
 
 ---
 
