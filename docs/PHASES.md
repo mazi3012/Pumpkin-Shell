@@ -24,7 +24,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 12 | Brokers | T10 | Linux | | done (PR #12 merged; Kiro sign-in and git push checked by hand 2026-11-21; Windows CI green) |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | done (PR #13 merged; 7 clients through the mirror, scenario 5 accepted as mirror-level test) |
-| 15 | Linux exec/connect auditing | T13 | Linux | | in-progress |
+| 15 | Linux exec/connect auditing | T13 | Linux | | in-progress (branch `phase-15-exec-connect-auditing`; local gate green: 541 tests, clippy, fmt, cargo deny; PR not yet opened) |
 | 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
 | 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | todo |
@@ -341,7 +341,11 @@ Extra, not in the original list: clipboard copy out and paste in, each after a d
 15.2. Rules `EXEC-AGENT-YOLO`, `EXEC-DESTRUCTIVE`, `EXEC-RECON`, `NET-DIRECT-CONNECT` (with fix hint).
 15.3. Fail closed: if the supervisor dies, kill the session and raise `SBX-MONITOR-LOST`.
 
-**Done when:** PRD scenarios 7 and 9 pass, and killing the supervisor kills the session.
+**Done when:**
+- [x] PRD scenario 7 (`NET-DIRECT-CONNECT`, hint `host_ports = [5432]`): test `scenario_7_a_direct_connection_to_a_host_port_gets_the_host_ports_hint`.
+- [x] PRD scenario 9 (`terraform destroy`, HIGH, not blocked): test `scenario_9_terraform_destroy_is_reported_and_is_not_blocked`.
+- [x] Killing the monitor kills the session: test `a_failing_monitor_is_reported_and_ends_the_sandbox`; no monitor, no start: `the_sandbox_does_not_start_without_its_monitor`.
+- [x] Steps 15.1 to 15.3 each have tests (see DECISIONS, 2026-11-22).
 
 ---
 
