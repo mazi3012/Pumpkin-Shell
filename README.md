@@ -8,7 +8,7 @@ AI in the IDE can read and change the project, but it cannot reach your SSH
 keys, cloud logins, host files outside the project, or the internet except
 through a checked proxy.
 
-Version 1.0.0 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
+Version 1.0.1 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
 Windsurf come after the first release.
 
 License: MIT (see [LICENSE](LICENSE)).
@@ -312,7 +312,7 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0) |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.1) |
 | 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 
