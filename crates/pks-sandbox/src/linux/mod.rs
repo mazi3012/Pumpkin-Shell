@@ -5,6 +5,7 @@ pub mod broker;
 pub mod bwrap;
 pub mod display;
 pub mod init;
+pub mod notify;
 pub mod relay;
 pub mod shim;
 pub mod signal;
@@ -142,6 +143,7 @@ impl SandboxBackend for LinuxBackend {
             host_ports: spec.host_ports.clone(),
             broker_dir: spec.broker_dir.clone(),
             mirror_socket: spec.mirror_socket.clone(),
+            supervisor_socket: spec.supervisor_socket.clone(),
             shims: installed_shims(),
             binds: spec.binds.clone(),
         };

@@ -126,6 +126,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         broker_dir: Some(session.dir.join("broker")),
         display_file: Some(session.dir.join(crate::clipboard::DISPLAY_FILE)),
         mirror_socket: Some(session.dir.join("mirror.sock")),
+        supervisor_socket: Some(session.dir.join(SUPERVISOR_SOCKET)),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -163,7 +164,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
                             if !reported.contains(name) {
                                 reported.push(name);
                                 let finding = pks_core::decoy::read_finding(name);
-                                emit(&log, &policy_hash, &finding, "alert");
+                                emit(&log, &policy_hash, "fs", &finding, "alert");
                                 route(&notifier, &session_dir, &finding);
                             }
                         }
@@ -192,7 +193,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
                 for finding in live_findings(&staging) {
                     let key = (finding.rule.as_str().to_owned(), finding.target.clone());
                     if reported.insert(key) {
-                        emit(&log, &policy_hash, &finding, "staged");
+                        emit(&log, &policy_hash, "ws", &finding, "staged");
                         route(&notifier, &session_dir, &finding);
                     }
                 }
@@ -227,8 +228,29 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
             })
         });
     }
+    // The monitor (Phase 15). Its socket is bound before the sandbox starts,
+    // because the sandbox connects to it before the IDE runs.
+    let monitor_socket = session.dir.join(SUPERVISOR_SOCKET);
+    let monitor_listener = match std::os::unix::net::UnixListener::bind(&monitor_socket) {
+        Ok(listener) => listener,
+        Err(error) => return setup(format!("cannot start the monitor socket: {error}")),
+    };
+    let monitor_stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let monitor_thread = start_monitor(
+        monitor_listener,
+        MonitorContext {
+            log: std::sync::Arc::clone(&session.log),
+            policy_hash: session.policy_hash.clone(),
+            notifier: std::sync::Arc::clone(&session.notifier),
+            session_dir: session.dir.clone(),
+            allowed_ports: monitor_allowed_ports(&spec.host_ports),
+        },
+        std::sync::Arc::clone(&monitor_stop),
+    );
     let result = backend.run(&spec);
     stop_watch.store(true, std::sync::atomic::Ordering::Relaxed);
+    monitor_stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let _ = monitor_thread.join();
     let _ = watch_thread.join();
     let _ = poll_thread.join();
     session.check_workspace(repo);
@@ -492,7 +514,7 @@ impl Session {
 
     /// Prints a finding and writes it to the signed log.
     fn report(&self, finding: &pks_core::Finding, verdict: &str) {
-        emit(&self.log, &self.policy_hash, finding, verdict);
+        emit(&self.log, &self.policy_hash, "ws", finding, verdict);
     }
 
     /// After the IDE exits: reports writes to protected and watched paths (kept
@@ -600,6 +622,10 @@ fn now_ms() -> u64 {
         })
 }
 
+/// The socket in the session directory that receives the monitor's listener
+/// (Phase 15).
+#[cfg(target_os = "linux")]
+const SUPERVISOR_SOCKET: &str = "supervisor.sock";
 /// How often the staged copies are checked while the IDE runs.
 #[cfg(target_os = "linux")]
 const STAGING_POLL: std::time::Duration = std::time::Duration::from_millis(500);
@@ -624,6 +650,132 @@ fn live_findings(staging: &pks_core::workspace::Staging) -> Vec<pks_core::Findin
         }
     }
     out
+}
+
+/// What the monitor thread needs from the session.
+#[cfg(target_os = "linux")]
+struct MonitorContext {
+    log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
+    policy_hash: String,
+    notifier: std::sync::Arc<pks_detect::Notifier>,
+    session_dir: PathBuf,
+    /// Loopback ports that are relays or the IDE's own listeners. A connection
+    /// to one of them is expected.
+    allowed_ports: Vec<u16>,
+}
+
+/// Starts the monitor (Phase 15) on `listener`, on its own thread. It takes
+/// the sandbox's listener, reports every program start and network
+/// connection, and ends the session if the monitor fails (fail closed, PRD
+/// design principle 3). See `pks_sandbox::linux::notify::serve_monitor`.
+#[cfg(target_os = "linux")]
+fn start_monitor(
+    listener: std::os::unix::net::UnixListener,
+    context: MonitorContext,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        pks_sandbox::linux::notify::serve_monitor(
+            &listener,
+            &stop,
+            |event| handle_monitor_event(&context, &mut seen, event),
+            |reason| monitor_lost(&context, reason),
+        );
+    })
+}
+
+/// Classifies one monitor event and routes each finding. A connection is
+/// reported once per target per session, so repeated loopback traffic does
+/// not flood the log.
+#[cfg(target_os = "linux")]
+fn handle_monitor_event(
+    context: &MonitorContext,
+    seen: &mut std::collections::HashSet<String>,
+    event: pks_sandbox::linux::notify::Event,
+) {
+    use pks_sandbox::linux::notify::Event;
+    let findings = match event {
+        Event::Exec {
+            path,
+            argv,
+            interactive,
+            ..
+        } => pks_detect::monitor::exec_findings(&path, &argv, interactive),
+        Event::Connect { target, .. } => {
+            if !seen.insert(target.to_string()) {
+                return;
+            }
+            pks_detect::monitor::connect_finding(target, &context.allowed_ports)
+                .into_iter()
+                .collect()
+        }
+        Event::OtherConnect { .. } => Vec::new(),
+    };
+    for finding in findings {
+        emit(
+            &context.log,
+            &context.policy_hash,
+            monitor_layer(finding.rule.as_str()),
+            &finding,
+            "alert",
+        );
+        route(&context.notifier, &context.session_dir, &finding);
+    }
+}
+
+/// The monitor failed while the session was running: log it as CRITICAL and
+/// kill the sandbox. The IDE cannot run without the monitor answering.
+#[cfg(target_os = "linux")]
+fn monitor_lost(context: &MonitorContext, reason: &str) {
+    let finding = pks_core::Finding {
+        rule: pks_core::RuleId::new("SBX-MONITOR-LOST"),
+        severity: pks_core::Severity::Critical,
+        target: "session".to_owned(),
+        message: format!("the monitor stopped ({reason}); the sandbox was killed"),
+        fix:
+            "Run 'pumpkin-shell doctor' to check the kernel support, then start the session again."
+                .to_owned(),
+    };
+    emit(
+        &context.log,
+        &context.policy_hash,
+        "sbx",
+        &finding,
+        "killed",
+    );
+    context.notifier.notify(&finding);
+    if let Some(pid) = pks_detect::read_pid(&context.session_dir) {
+        let _ =
+            pks_sandbox::linux::signal::signal_tree(pid, pks_sandbox::linux::signal::Signal::Kill);
+    }
+}
+
+/// The log layer of a monitor finding, from its rule prefix.
+#[cfg(target_os = "linux")]
+fn monitor_layer(rule: &str) -> &'static str {
+    if rule.starts_with("EXEC-") {
+        "exec"
+    } else if rule.starts_with("NET-") {
+        "net"
+    } else {
+        "sbx"
+    }
+}
+
+/// Loopback ports that are not reported: the proxy, the mirror and the
+/// callback, which the sandbox relays itself, and the session's host ports.
+#[cfg(target_os = "linux")]
+fn monitor_allowed_ports(host_ports: &[u16]) -> Vec<u16> {
+    use pks_sandbox::linux::bwrap::{CALLBACK_TARGET, MIRROR_LISTEN};
+    use pks_sandbox::linux::relay::PROXY_LISTEN;
+    let mut ports: Vec<u16> = [PROXY_LISTEN, MIRROR_LISTEN, CALLBACK_TARGET]
+        .iter()
+        .filter_map(|text| text.parse::<std::net::SocketAddr>().ok())
+        .map(|addr| addr.port())
+        .collect();
+    ports.extend_from_slice(host_ports);
+    ports
 }
 
 /// Routes a finding by severity (PRD FR-NOTIFY). A CRITICAL finding pauses
@@ -671,6 +823,7 @@ fn pause_session(dir: &Path) {
 fn emit(
     log: &std::sync::Mutex<Option<pks_core::log::Logger>>,
     policy_hash: &str,
+    layer: &str,
     finding: &pks_core::Finding,
     verdict: &str,
 ) {
@@ -688,7 +841,7 @@ fn emit(
         let _ = logger.append(
             &Record {
                 policy_hash,
-                layer: "ws",
+                layer,
                 target: &finding.target,
                 rule: finding.rule.as_str(),
                 verdict,
@@ -852,6 +1005,7 @@ pub fn sandbox_init(
     proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
     mirror: Option<(std::net::SocketAddr, PathBuf)>,
     callback: Option<(PathBuf, std::net::SocketAddr)>,
+    supervisor: Option<PathBuf>,
     command: &[std::ffi::OsString],
 ) -> ExitCode {
     let mut relays = Vec::new();
@@ -871,7 +1025,14 @@ pub fn sandbox_init(
     }
     let callback =
         callback.map(|(socket, target)| pks_sandbox::linux::init::Callback { socket, target });
-    let error = pks_sandbox::linux::init::run(rw, ro, command, &relays, callback.as_ref());
+    let error = pks_sandbox::linux::init::run(
+        rw,
+        ro,
+        command,
+        &relays,
+        callback.as_ref(),
+        supervisor.as_deref(),
+    );
     eprintln!("sandbox-init: {error}");
     ExitCode::from(126)
 }
@@ -901,6 +1062,7 @@ pub fn sandbox_init(
     _proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
     _mirror: Option<(std::net::SocketAddr, PathBuf)>,
     _callback: Option<(PathBuf, std::net::SocketAddr)>,
+    _supervisor: Option<PathBuf>,
     _command: &[std::ffi::OsString],
 ) -> ExitCode {
     eprintln!("sandbox-init: Linux only");

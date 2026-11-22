@@ -6,6 +6,7 @@
 //! - HIGH → desktop notification (`notify-send`)
 //! - CRITICAL → desktop notification and pause (webhook output deferred, DECISIONS Q7)
 
+pub mod monitor;
 pub mod notify;
 pub mod session;
 

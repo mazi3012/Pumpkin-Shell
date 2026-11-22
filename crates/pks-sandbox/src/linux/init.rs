@@ -7,15 +7,20 @@
 //! 2. seccomp: `ioctl(_, TIOCSTI, _)` returns EPERM. TIOCSTI pushes bytes
 //!    into a terminal's input queue, which is how a program can type commands
 //!    into the terminal it shares with another program.
-//! 3. exec: the IDE replaces this process. Both layers stay in place.
+//! 3. monitor (Phase 15): the exec and connect calls are reported to the host
+//!    supervisor. The listener is handed over and closed here, so the sandbox
+//!    cannot answer its own notifications.
+//! 4. exec: the IDE replaces this process. All layers stay in place.
 //!
-//! Both layers are applied in the process before exec, so the IDE and every
+//! The layers are applied in the process before exec, so the IDE and every
 //! child it starts inherit them.
 
 use std::collections::BTreeMap;
 use std::ffi::OsString;
+use std::os::fd::AsFd;
+use std::os::unix::net::UnixStream;
 use std::os::unix::process::CommandExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use landlock::{
@@ -27,6 +32,7 @@ use seccompiler::{
     SeccompRule,
 };
 
+use super::notify;
 use crate::SandboxError;
 
 /// Applies Landlock with the given write and read paths.
@@ -100,11 +106,33 @@ pub fn block_tiocsti() -> Result<(), SandboxError> {
     seccompiler::apply_filter(&program).map_err(|e| setup("install", &e))
 }
 
-/// Applies both layers, then replaces this process with `command`.
-/// Returns only on failure.
+/// Sends the monitor's listener to the host supervisor at `socket` (Phase 15).
+/// The socket is connected before the filter exists, because connect is one
+/// of the monitored calls. After the listener is sent, this process closes
+/// its copy.
 ///
 /// # Errors
-/// Fails before exec if either layer cannot be applied (fail closed), if the
+/// Fails when the supervisor cannot be reached or the filter cannot be
+/// installed. The sandbox then does not start (fail closed).
+fn announce_monitor(socket: &Path) -> Result<(), SandboxError> {
+    let setup = |what: &str, error: &dyn std::fmt::Display| {
+        SandboxError::Setup(format!("monitor: {what}: {error}"))
+    };
+    let stream = UnixStream::connect(socket).map_err(|e| SandboxError::Io {
+        context: "cannot reach the monitor".to_owned(),
+        source: e,
+    })?;
+    let listener = notify::install().map_err(|e| setup("install", &e))?;
+    notify::send_fd(&stream, listener.as_fd()).map_err(|e| setup("send", &e))?;
+    Ok(())
+}
+
+/// Applies the layers, then replaces this process with `command`. Returns
+/// only on failure. `supervisor` is the host socket that receives the
+/// monitor's listener (Phase 15), or `None` for no monitor.
+///
+/// # Errors
+/// Fails before exec if a layer cannot be applied (fail closed), if the
 /// command is empty, or if exec fails.
 pub fn run(
     rw: &[PathBuf],
@@ -112,6 +140,7 @@ pub fn run(
     command: &[OsString],
     relays: &[Relay],
     callback: Option<&Callback>,
+    supervisor: Option<&Path>,
 ) -> SandboxError {
     if let Err(error) = restrict_filesystem(rw, ro) {
         return error;
@@ -127,6 +156,11 @@ pub fn run(
         return error;
     }
     if let Err(error) = block_tiocsti() {
+        return error;
+    }
+    if let Some(socket) = supervisor
+        && let Err(error) = announce_monitor(socket)
+    {
         return error;
     }
     let Some((program, args)) = command.split_first() else {
