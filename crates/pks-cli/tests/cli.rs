@@ -48,8 +48,6 @@ fn kiro_is_a_one_word_shortcut_that_takes_a_path() {
     let out = run(&["kiro", "--help"]).unwrap();
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(
-        stdout.contains("Usage: pumpkin-shell kiro [PATH]"),
-        "{stdout}"
-    );
+    // The program is pumpkin-shell.exe on Windows, so check the part that is the same.
+    assert!(stdout.contains("kiro [PATH]"), "{stdout}");
 }
