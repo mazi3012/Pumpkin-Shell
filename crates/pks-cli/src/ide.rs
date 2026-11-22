@@ -622,12 +622,12 @@ fn now_ms() -> u64 {
         })
 }
 
-/// How often the staged copies are checked while the IDE runs.
-#[cfg(target_os = "linux")]
 /// The socket in the session directory that receives the monitor's listener
 /// (Phase 15).
 #[cfg(target_os = "linux")]
 const SUPERVISOR_SOCKET: &str = "supervisor.sock";
+/// How often the staged copies are checked while the IDE runs.
+#[cfg(target_os = "linux")]
 const STAGING_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
 /// Config findings in the staged copies the sandbox has changed so far. Only
