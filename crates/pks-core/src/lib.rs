@@ -9,6 +9,7 @@ pub mod log;
 pub mod net;
 pub mod paths;
 pub mod policy;
+pub mod profile;
 pub mod snapshot;
 pub mod trust;
 pub mod workspace;

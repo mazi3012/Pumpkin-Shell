@@ -1,0 +1,28 @@
+# Built-in profile for the Kiro IDE: the endpoints a Kiro IDE installation needs.
+#
+# Source: https://kiro.dev/docs/privacy-and-security/firewalls/ (page updated
+# 2026-11-18), the sections "required by all Kiro products" and "every Kiro IDE
+# installation", US East endpoints. Checked 2026-11-23.
+#
+# Not included, on purpose:
+# - the eu-central-1 endpoints (for Kiro profiles in Europe; add them with
+#   `pumpkin-shell allow` if you need them);
+# - Google and GitHub sign-in, billing, extensions and Powers hosts, which
+#   only some users need. Allow them with `pumpkin-shell allow` when needed.
+#
+# Wildcards are not allowed here or anywhere in a policy. Each entry is an exact
+# host and port.
+
+version = 1
+
+[network]
+allow = [
+  "app.kiro.dev:443",
+  "assets.app.kiro.dev:443",
+  "prod.us-east-1.auth.desktop.kiro.dev:443",
+  "prod.download.desktop.kiro.dev:443",
+  "q.us-east-1.amazonaws.com:443",
+  "runtime.us-east-1.kiro.dev:443",
+  "management.us-east-1.kiro.dev:443",
+  "telemetry.us-east-1.kiro.dev:443",
+]

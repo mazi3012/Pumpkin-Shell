@@ -1,6 +1,6 @@
 # RPM spec for pumpkin-shell (Phase 18.1). Built in CI in a Fedora container.
 Name:           pumpkin-shell
-Version:        1.0.1
+Version:        1.0.2
 Release:        1%{?dist}
 Summary:        Sandbox for AI-powered IDEs (Kiro first)
 License:        MIT
@@ -39,6 +39,8 @@ install -Dm0644 packaging/apparmor/usr.bin.pumpkin-shell %{buildroot}%{_datadir}
 %{_datadir}/%{name}/apparmor/usr.bin.pumpkin-shell
 
 %changelog
+* Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.2-1
+- Allow Kiro's own endpoints by default, so sign-in works without a policy file.
 * Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.1-1
 - Add pumpkin-shell dashboard (Pumpkin-Shell Watch), a read-only local page.
 - Add pumpkin-shell kiro [PATH] shortcut.

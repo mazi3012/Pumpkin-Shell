@@ -305,7 +305,7 @@ Extra, not in the original list: clipboard copy out and paste in, each after a d
 **Goal:** one adapter that covers Kiro, VS Code, Cursor and Windsurf. Adds crate `pks-ide` and `profiles/`.
 
 13.1. Code-OSS adapter: shared layout of settings, extensions and user data.
-13.2. Profiles in `profiles/*.toml`: paths, exact domains, env keys per IDE.
+13.2. Profiles in `profiles/*.toml`: paths, exact domains, env keys per IDE. [x] Kiro network profile (`profiles/kiro.toml`, built into the binary, 2026-11-23). Paths and env keys, and the VS Code, Cursor and Windsurf profiles, are not done.
 13.3. `pumpkin-shell ide import <ide>`: settings and extensions, never tokens.
 13.4. `ide code`, `ide cursor`, `ide windsurf`.
 13.5. Tag release **Linux v0.5**.
