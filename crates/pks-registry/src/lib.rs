@@ -10,6 +10,7 @@ pub mod integrity;
 pub mod mirror;
 pub mod names;
 pub mod osv;
+#[cfg(unix)]
 pub mod server;
 pub mod typosquat;
 pub mod upstream;

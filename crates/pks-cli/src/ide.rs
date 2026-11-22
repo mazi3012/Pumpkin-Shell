@@ -564,9 +564,9 @@ fn unix_seconds() -> i64 {
         })
 }
 
-#[cfg(target_os = "linux")]
 /// Writes the package mirror's notes to the session log under layer
 /// `registry`. A note reads "RULE detail"; the detail is the target.
+#[cfg(target_os = "linux")]
 fn mirror_recorder(
     log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
     policy_hash: String,
@@ -590,6 +590,7 @@ fn mirror_recorder(
     })
 }
 
+#[cfg(target_os = "linux")]
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
     SystemTime::now()
