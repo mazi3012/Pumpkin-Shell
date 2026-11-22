@@ -8,7 +8,7 @@ AI in the IDE can read and change the project, but it cannot reach your SSH
 keys, cloud logins, host files outside the project, or the internet except
 through a checked proxy.
 
-Version 1.0.0 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
+Version 1.0.1 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
 Windsurf come after the first release.
 
 License: MIT (see [LICENSE](LICENSE)).
@@ -66,118 +66,96 @@ about what it tried.
 
 ## Install
 
-### Requirements
+Ubuntu 24.04, Debian or Linux Mint, on x86_64. Paste the two cells into a
+terminal, one after the other.
 
-| Need | Why | How to get it |
-|---|---|---|
-| Linux, x86_64 or ARM64, kernel 5.13 or newer (6.7 or newer recommended) | Landlock and seccomp | `uname -r` |
-| `bubblewrap` 0.8 or newer | builds the sandbox | `sudo apt install bubblewrap` |
-| `xserver-xephyr` and `xauth` | the IDE shows on a nested X display | `sudo apt install xserver-xephyr xauth` |
-| Unprivileged user namespaces allowed | the sandbox runs without root | `pumpkin-shell doctor` tells you how to fix it |
-| The IDE itself, for example Kiro | the program you protect | from [kiro.dev](https://kiro.dev/) |
-
-Optional, for nicer alerts: `zenity` (popups), `xclip` (clipboard) and
-`libnotify-bin` (desktop notifications).
-
-The sandbox displays the IDE through X11. A Wayland desktop works only if
-XWayland is running. This has not been tested yet.
-
-### Quick install (Ubuntu, Debian, Linux Mint)
-
-You need [cosign](https://github.com/sigstore/cosign/releases) to check the
-download. Then run:
+### Cell 1: install Pumpkin-Shell and what it needs
 
 ```sh
-git clone https://github.com/mazi3012/Pumpkin-Shell.git
-cd Pumpkin-Shell
-packaging/install.sh 1.0.0
-pumpkin-shell doctor
-```
+(
+set -e
 
-The script downloads the package and its signature, checks the signature, and
-only then installs it with `apt` (it asks for your password). If the check
-fails, nothing is installed. To check the download without installing, add
-`--check-only`. Read the script first if you want to: it is short.
+# 1. Check the system: Ubuntu 24.04, Debian or Linux Mint on x86_64.
+[ "$(uname -m)" = "x86_64" ] || { echo "Pumpkin-Shell needs an x86_64 machine." >&2; exit 1; }
+command -v apt-get >/dev/null || { echo "This needs apt (Ubuntu, Debian or Linux Mint)." >&2; exit 1; }
 
-### Option 1: install the Debian package by hand (Ubuntu 24.04+, Debian 13+)
+# 2. System packages. Install only the ones that are missing.
+PKGS="bubblewrap xserver-xephyr xauth zenity xclip libnotify-bin git build-essential curl ca-certificates"
+MISSING=""
+for p in $PKGS; do dpkg -s "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"; done
+if [ -n "$MISSING" ]; then
+  echo "Installing system packages:$MISSING"
+  sudo apt-get update
+  sudo apt-get install -y $MISSING
+else
+  echo "System packages: already installed"
+fi
 
-1. Download `pumpkin-shell_1.0.0_amd64.deb` from the
-   [Releases page](https://github.com/mazi3012/pumpkin-shell/releases).
-2. (Recommended) Check the signature, see [Verify the download](#verify-the-download).
-3. Install it. `apt` also installs the dependencies:
+# 3. Kiro is not installed by apt. Check for it; cell 2 needs it.
+if command -v kiro >/dev/null 2>&1; then
+  echo "Kiro: found"
+else
+  echo "Kiro: NOT FOUND. Install it from https://kiro.dev/ before running cell 2."
+fi
 
-   ```sh
-   sudo apt install ./pumpkin-shell_1.0.0_amd64.deb
-   ```
+# 4. Rust. Install rustup only when cargo is missing. The repo pins its Rust version.
+export PATH="$HOME/.cargo/bin:$PATH"
+if ! command -v cargo >/dev/null 2>&1; then
+  echo "Installing Rust with rustup"
+  tmp=$(mktemp -d)
+  base=https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu
+  curl -fsSL -o "$tmp/rustup-init" "$base/rustup-init"
+  curl -fsSL -o "$tmp/rustup-init.sha256" "$base/rustup-init.sha256"
+  (cd "$tmp" && sha256sum -c rustup-init.sha256)
+  chmod +x "$tmp/rustup-init"
+  "$tmp/rustup-init" -y --profile minimal
+  rm -rf "$tmp"
+fi
 
-4. Check the machine:
+# 5. Get the Pumpkin-Shell source, or update it if it is already there.
+REPO="$HOME/pumpkin-shell"
+if [ -d "$REPO/.git" ]; then
+  git -C "$REPO" pull --ff-only
+else
+  git clone https://github.com/mazi3012/pumpkin-shell.git "$REPO"
+fi
 
-   ```sh
-   pumpkin-shell doctor
-   ```
-
-   Every line says PASS, WARN or FAIL. A FAIL line includes the fix to run.
-
-### Option 2: install the RPM (Fedora 45 and later)
-
-1. Download `pumpkin-shell-1.0.0-1.*.x86_64.rpm` from the
-   [Releases page](https://github.com/mazi3012/pumpkin-shell/releases) and
-   check its signature (see [Verify the download](#verify-the-download)).
-2. Install it. `dnf` also installs the dependencies:
-
-   ```sh
-   sudo dnf install ./pumpkin-shell-1.0.0-1.*.x86_64.rpm
-   pumpkin-shell doctor
-   ```
-
-### Ubuntu 24.04: if `doctor` says user namespaces are restricted
-
-Ubuntu 24.04 blocks unprivileged user namespaces by default, so the sandbox
-cannot start. The package ships an AppArmor profile that allows only this
-permission. It is not installed automatically. Install it with root rights:
-
-```sh
-sudo install -m 0644 /usr/share/pumpkin-shell/apparmor/usr.bin.pumpkin-shell /etc/apparmor.d/usr.bin.pumpkin-shell
-sudo apparmor_parser -r /etc/apparmor.d/usr.bin.pumpkin-shell
-pumpkin-shell doctor
-```
-
-To remove it, run `sudo apparmor_parser -R /etc/apparmor.d/usr.bin.pumpkin-shell`
-and delete the file. The profile does not confine the program. It only grants
-the `userns` permission. The profile has been checked for syntax; it has not
-yet been tested on a restricted Ubuntu 24.04 host.
-
-### Option 3: build from source
-
-The Rust version is pinned in `rust-toolchain.toml`. Install
-[rustup](https://rustup.rs/) first, then:
-
-```sh
-git clone https://github.com/mazi3012/pumpkin-shell.git
-cd pumpkin-shell
+# 6. Build and install the pumpkin-shell command.
+cd "$REPO"
 cargo build --release --locked -p pks-cli
 sudo install -m 0755 target/release/pumpkin-shell /usr/local/bin/pumpkin-shell
-pumpkin-shell doctor
+pumpkin-shell --version
+
+# 7. Check the machine. A FAIL line prints the fix to run.
+pumpkin-shell doctor || echo "doctor reported a FAIL. Apply the fix it printed, then run cell 2 again."
+echo "Pumpkin-Shell is installed. Run cell 2 to launch Kiro."
+)
 ```
 
-### Verify the download
+This installs the system packages it is missing (`bubblewrap`, `xserver-xephyr`,
+`xauth`, and the optional `zenity`, `xclip`, `libnotify-bin` for popups and
+alerts), installs Rust if it is missing, builds Pumpkin-Shell from source and
+puts `pumpkin-shell` in `/usr/local/bin`. It asks for your password once.
 
-Each release is signed without a private key (keyless signing with
-[Sigstore](https://www.sigstore.dev/)). The signature is tied to the release
-workflow in this repository. Install `cosign`, then run:
+Kiro is not installed by apt. Get it from [kiro.dev](https://kiro.dev/) if cell 1
+says it is missing.
+
+### Cell 2: launch Kiro in the sandbox
 
 ```sh
-cosign verify-blob \
-  --bundle pumpkin-shell_1.0.0_amd64.deb.sigstore.json \
-  --certificate-identity-regexp 'https://github.com/mazi3012/[Pp]umpkin-[Ss]hell/.github/workflows/release.yml@refs/tags/v.*' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  pumpkin-shell_1.0.0_amd64.deb
+PROJECT="$HOME/my-project"
+mkdir -p "$PROJECT"
+[ -d "$PROJECT/.git" ] || git -C "$PROJECT" init -q
+pumpkin-shell kiro "$PROJECT"
 ```
 
-Each release also has SLSA provenance, which says which workflow built the
-package. The security model, its known risks and the measured escape corpus are
-in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and
-[docs/ESCAPE-CORPUS.md](docs/ESCAPE-CORPUS.md).
+This opens `~/my-project` in Kiro. Replace the path with your own project to
+open that one instead.
+
+If `doctor` shows a FAIL line, the line prints the fix to run.
+
+The sandbox shows Kiro through X11. Wayland works only through XWayland, which
+has not been tested.
 
 ---
 
@@ -334,7 +312,7 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0) |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.1) |
 | 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 
