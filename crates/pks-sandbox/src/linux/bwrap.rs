@@ -46,6 +46,8 @@ pub const MIRROR_LISTEN: &str = "127.0.0.1:3130";
 pub const MIRROR_URL: &str = "http://127.0.0.1:3130";
 /// Where the mirror's Unix socket appears inside the sandbox.
 pub const MIRROR_SOCKET_IN: &str = "/run/pks/mirror.sock";
+/// Where the monitor's supervisor socket appears inside the sandbox (Phase 15).
+pub const SUPERVISOR_SOCKET_IN: &str = "/run/pks/supervisor.sock";
 /// Socket timeout for pip and uv, in seconds (Phase 14).
 const MIRROR_TIMEOUT_SECS: &str = "120";
 /// Where the broker directory appears inside the sandbox (Phase 12).
@@ -105,6 +107,8 @@ pub struct Plan {
     pub broker_dir: Option<PathBuf>,
     /// Host path of the mirror's Unix socket, or `None` for no mirror.
     pub mirror_socket: Option<PathBuf>,
+    /// Host path of the supervisor socket for the monitor, or `None`.
+    pub supervisor_socket: Option<PathBuf>,
     /// System programs that get a broker wrapper: `xdg-open` and `git`, the
     /// ones installed on the host.
     pub shims: Vec<&'static str>,
@@ -200,6 +204,11 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     if let Some(socket) = &plan.mirror_socket {
         push_path(&mut args, "--ro-bind", socket, MIRROR_SOCKET_IN);
     }
+    // The monitor's supervisor socket (Phase 15). The sandbox connects to it
+    // once, before the filter is installed, and hands over the listener.
+    if let Some(socket) = &plan.supervisor_socket {
+        push_path(&mut args, "--ro-bind", socket, SUPERVISOR_SOCKET_IN);
+    }
     // The broker (Phase 12): a shared directory for the request and callback
     // sockets, and the wrappers over `xdg-open` and `git`. The real git is
     // mounted first, under a private path. Every wrapper is this binary.
@@ -291,6 +300,9 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
     if plan.mirror_socket.is_some() {
         push(&mut args, &["--ro", MIRROR_SOCKET_IN]);
     }
+    if plan.supervisor_socket.is_some() {
+        push(&mut args, &["--ro", SUPERVISOR_SOCKET_IN]);
+    }
     // The relay runs inside the sandbox, before the IDE: loopback to the proxy.
     push(
         &mut args,
@@ -328,6 +340,9 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
                 CALLBACK_TARGET,
             ],
         );
+    }
+    if plan.supervisor_socket.is_some() {
+        push(&mut args, &["--supervisor-socket", SUPERVISOR_SOCKET_IN]);
     }
     // `--` ends the init options. Everything after it is the IDE command.
     args.push(OsString::from("--"));
@@ -377,6 +392,7 @@ mod tests {
             binds: Vec::new(),
             broker_dir: None,
             mirror_socket: None,
+            supervisor_socket: None,
             shims: Vec::new(),
         }
     }

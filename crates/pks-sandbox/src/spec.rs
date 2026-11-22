@@ -88,6 +88,10 @@ pub struct LaunchSpec {
     /// The package mirror's Unix socket on the host (Phase 14). `None` runs
     /// without a mirror. When set, npm and pip are pointed at the mirror.
     pub mirror_socket: Option<PathBuf>,
+    /// The host socket that receives the monitor's listener (Phase 15). The
+    /// monitor reports exec and connect calls to the host. `None` runs
+    /// without the monitor.
+    pub supervisor_socket: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -330,6 +334,7 @@ mod tests {
                 broker_dir: None,
                 display_file: None,
                 mirror_socket: None,
+                supervisor_socket: None,
             };
             Ok(Self { _dir: dir, spec })
         }

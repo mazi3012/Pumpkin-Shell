@@ -194,6 +194,7 @@ impl Layout {
             broker_dir: None,
             display_file: None,
             mirror_socket: None,
+            supervisor_socket: None,
         }
     }
 }
@@ -1324,5 +1325,194 @@ exit 0
     assert_client_ok(&layout, status)?;
     let version = fs::read_to_string(layout.repo.join("version.txt"))?;
     assert!(version.starts_with("uv 0.13.9"), "{version}");
+    Ok(())
+}
+
+/// The sandbox's status, the monitor's events, and the monitor's failures.
+type Monitored = (
+    std::process::ExitStatus,
+    Vec<pks_sandbox::linux::notify::Event>,
+    Vec<String>,
+);
+
+/// Runs `script` in the sandbox with the monitor on. The monitor is served on
+/// its own thread, as the session does. Returns the sandbox's status, every
+/// event the monitor saw, and any monitor failures.
+fn run_monitored(layout: &Layout, script: &str) -> Result<Monitored, Box<dyn std::error::Error>> {
+    use pks_sandbox::linux::notify::{Event, serve_monitor};
+    use std::sync::Mutex;
+    let dir = tempfile::tempdir()?;
+    let socket = dir.path().join("supervisor.sock");
+    let listener = UnixListener::bind(&socket)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let events: Arc<Mutex<Vec<Event>>> = Arc::default();
+    let lost: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (flag, sink, lost_sink) = (Arc::clone(&stop), Arc::clone(&events), Arc::clone(&lost));
+    let monitor = std::thread::spawn(move || {
+        serve_monitor(
+            &listener,
+            &flag,
+            |event| {
+                if let Ok(mut list) = sink.lock() {
+                    list.push(event);
+                }
+            },
+            |reason| {
+                if let Ok(mut list) = lost_sink.lock() {
+                    list.push(reason.to_owned());
+                }
+            },
+        );
+    });
+    let mut spec = layout.spec_running(script);
+    spec.supervisor_socket = Some(socket.clone());
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    // Unblocks the monitor if no sandbox ever connected to it.
+    let _ = std::os::unix::net::UnixStream::connect(&socket);
+    monitor.join().map_err(|_| "the monitor thread panicked")?;
+    let events = events.lock().map(|list| list.clone()).unwrap_or_default();
+    let lost = lost.lock().map(|list| list.clone()).unwrap_or_default();
+    Ok((status?, events, lost))
+}
+
+/// The findings the detection rules make of the monitor's events.
+fn monitor_findings(events: &[pks_sandbox::linux::notify::Event]) -> Vec<Finding> {
+    use pks_sandbox::linux::notify::Event;
+    let allowed = [3129, 3130];
+    events
+        .iter()
+        .flat_map(|event| match event {
+            Event::Exec {
+                path,
+                argv,
+                interactive,
+                ..
+            } => pks_detect::monitor::exec_findings(path, argv, *interactive),
+            Event::Connect { target, .. } => {
+                pks_detect::monitor::connect_finding(*target, &allowed)
+                    .into_iter()
+                    .collect()
+            }
+            Event::OtherConnect { .. } => Vec::new(),
+        })
+        .collect()
+}
+
+/// PRD scenario 9: `terraform destroy` in the IDE terminal is reported HIGH
+/// (EXEC-DESTRUCTIVE), and the command still runs (the monitor only reports).
+#[test]
+fn scenario_9_terraform_destroy_is_reported_and_is_not_blocked() -> TestResult {
+    let layout = Layout::new()?;
+    let script = "cd /workspace || exit 2\nprintf '#!/bin/sh\\nexit 1\\n' > /workspace/terraform || exit 3\nchmod +x /workspace/terraform || exit 4\n/workspace/terraform destroy -auto-approve > /workspace/tf.log 2>&1\necho finished > /workspace/finished.txt\nexit 0\n";
+    let (status, events, lost) = run_monitored(&layout, script)?;
+    assert!(status.success(), "{status}");
+    assert!(lost.is_empty(), "{lost:?}");
+    assert!(
+        layout.repo.join("finished.txt").exists(),
+        "the script did not reach its end"
+    );
+    let findings = monitor_findings(&events);
+    assert!(
+        findings
+            .iter()
+            .any(|f| f.rule.as_str() == "EXEC-DESTRUCTIVE"
+                && f.severity == Severity::High
+                && f.target.ends_with("/terraform")),
+        "{findings:?}"
+    );
+    Ok(())
+}
+
+/// PRD scenario 7: a connection to a host port that is not listed gets
+/// NET-DIRECT-CONNECT, with the `host_ports` hint.
+#[test]
+fn scenario_7_a_direct_connection_to_a_host_port_gets_the_host_ports_hint() -> TestResult {
+    let layout = Layout::new()?;
+    let script = "curl -s -m 3 http://127.0.0.1:5432/ > /dev/null 2>&1\necho finished > /workspace/finished.txt\nexit 0\n";
+    let (status, events, lost) = run_monitored(&layout, script)?;
+    assert!(status.success(), "{status}");
+    assert!(lost.is_empty(), "{lost:?}");
+    assert!(layout.repo.join("finished.txt").exists());
+    let findings = monitor_findings(&events);
+    let direct = findings
+        .iter()
+        .find(|f| f.rule.as_str() == "NET-DIRECT-CONNECT")
+        .unwrap_or_else(|| panic!("no NET-DIRECT-CONNECT in {findings:?}"));
+    assert_eq!(direct.severity, Severity::Warn);
+    assert_eq!(direct.target, "127.0.0.1:5432");
+    assert!(direct.fix.contains("host_ports = [5432]"), "{}", direct.fix);
+    Ok(())
+}
+
+/// Fail closed (Phase 15.3): without a monitor the sandbox does not start, so
+/// the IDE's script never runs.
+#[test]
+fn the_sandbox_does_not_start_without_its_monitor() -> TestResult {
+    let layout = Layout::new()?;
+    let mut spec = layout.spec_running("echo ran > /workspace/ran.txt\nexit 0\n");
+    spec.supervisor_socket = Some(PathBuf::from("/definitely/not/here/supervisor.sock"));
+    let result = backend()?.run(&spec);
+    assert!(
+        !layout.repo.join("ran.txt").exists(),
+        "the IDE ran without its monitor"
+    );
+    assert!(result.map(|status| !status.success()).unwrap_or(true));
+    Ok(())
+}
+
+/// Fail closed (Phase 15.3): when the monitor fails, the failure is reported
+/// and the sandbox is killed. Here the monitor's event handler fails on the
+/// first event, and the failure handler kills the sandbox, as the session
+/// does.
+#[test]
+fn a_failing_monitor_is_reported_and_ends_the_sandbox() -> TestResult {
+    use pks_sandbox::linux::notify::serve_monitor;
+    use pks_sandbox::linux::signal::{Signal, signal_tree};
+    let layout = Layout::new()?;
+    let dir = tempfile::tempdir()?;
+    let socket = dir.path().join("supervisor.sock");
+    let listener = UnixListener::bind(&socket)?;
+    let pid_dir = dir.path().to_path_buf();
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let lost: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
+    let lost_sink = Arc::clone(&lost);
+    let monitor = std::thread::spawn(move || {
+        serve_monitor(
+            &listener,
+            &flag,
+            |_event| panic!("the monitor fails on its first event"),
+            |reason| {
+                if let Ok(mut list) = lost_sink.lock() {
+                    list.push(reason.to_owned());
+                }
+                if let Some(pid) = pks_detect::read_pid(&pid_dir) {
+                    let _ = signal_tree(pid, Signal::Kill);
+                }
+            },
+        );
+    });
+    let mut spec =
+        layout.spec_running("sleep 30\necho finished > /workspace/finished.txt\nexit 0\n");
+    spec.supervisor_socket = Some(socket.clone());
+    spec.pid_file = Some(dir.path().join(pks_detect::PID_FILE));
+    let started = std::time::Instant::now();
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = std::os::unix::net::UnixStream::connect(&socket);
+    let _ = monitor.join();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(25),
+        "the sandbox was not ended: {:?}",
+        started.elapsed()
+    );
+    assert!(
+        !layout.repo.join("finished.txt").exists(),
+        "the IDE kept running"
+    );
+    let reasons = lost.lock().map(|list| list.clone()).unwrap_or_default();
+    assert_eq!(reasons, ["the monitor panicked"], "{reasons:?}");
+    assert!(status.map(|status| !status.success()).unwrap_or(true));
     Ok(())
 }

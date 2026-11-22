@@ -31,6 +31,8 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
+// Parsed once at startup, so the size of the largest variant does not matter.
+#[allow(clippy::large_enum_variant)]
 enum Command {
     /// Check whether this machine can run the sandbox, and how to fix each problem.
     Doctor {
@@ -96,6 +98,9 @@ enum Command {
         /// Host port the IDE may reach on loopback (repeatable, PRD FR-NET).
         #[arg(long = "relay-host-port", requires = "relay_socket")]
         relay_host_ports: Vec<u16>,
+        /// The host socket that receives the monitor's listener (Phase 15).
+        #[arg(long = "supervisor-socket")]
+        supervisor_socket: Option<PathBuf>,
         /// The program to run after the restrictions are applied.
         #[arg(last = true, required = true, num_args = 1..)]
         command: Vec<OsString>,
@@ -259,6 +264,7 @@ fn main() -> ExitCode {
             mirror_socket,
             callback_socket,
             callback_target,
+            supervisor_socket,
             command,
         }) => ide::sandbox_init(
             &rw,
@@ -268,6 +274,7 @@ fn main() -> ExitCode {
                 .map(|(listen, socket)| (listen, socket, relay_host_ports)),
             mirror_listen.zip(mirror_socket),
             callback_socket.zip(callback_target),
+            supervisor_socket,
             &command,
         ),
         Some(Command::SandboxCallback { socket, target }) => ide::sandbox_callback(&socket, target),
