@@ -5,10 +5,11 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 repository.workspace = true
 
 [dependencies]
-pks-core = { path = "../pks-core", version = "0.0.0" }
+pks-core = { path = "../pks-core", version = "1.0.0" }
 thiserror.workspace = true
 
 [lints]

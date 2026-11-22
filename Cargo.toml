@@ -3,12 +3,12 @@ resolver = "3"
 members = ["crates/pks-core", "crates/pks-scan", "crates/pks-sandbox", "crates/pks-proxy", "crates/pks-detect", "crates/pks-registry", "crates/pks-cli"]
 
 [workspace.package]
-version = "0.0.0"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.100.0"
 publish = false
 repository = "https://github.com/mazi3012/pumpkin-shell"
-# license: not set until DECISIONS Q6 is answered.
+license = "MIT"  # DECISIONS Q6, answered 2026-11-22
 
 [workspace.dependencies]
 # Versions checked on crates.io before adding (tech.md "Versions" rule).

@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand, ValueEnum};
 use pks_core::Severity;
 
-/// Sandbox and tripwire system for AI-powered IDEs on Linux and Windows.
+/// Sandbox and tripwire system for AI-powered IDEs (Linux, Kiro first).
 #[derive(Parser)]
 #[command(name = "pumpkin-shell", version)]
 struct Cli {
