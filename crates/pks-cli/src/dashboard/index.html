@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Pumpkin-Shell Watch</title>
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<a class="skip" href="#feed">Skip to the live feed</a>
+
+<header class="top">
+  <div class="brand">
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <path class="pumpkin" d="M32 14c-12 0-22 9-22 22 0 12 9 20 22 20s22-8 22-20c0-13-10-22-22-22z"/>
+      <path class="ridge" d="M32 15c-5 5-5 31 0 40M22 18c-6 8-6 28 0 36M42 18c6 8 6 28 0 36"/>
+      <path class="stem" d="M30 12h4l1 6h-6z"/>
+      <path class="leaf" d="M36 12c6-4 11-2 12 1-5 2-9 1-12-1z"/>
+    </svg>
+    <div>
+      <h1>Pumpkin-Shell <span>Watch</span></h1>
+      <p class="tag">What is your sandboxed IDE doing right now? <span aria-hidden="true">👻</span></p>
+    </div>
+  </div>
+  <div class="status" aria-live="polite">
+    <span class="pill live" id="live"><span class="dot" aria-hidden="true"></span><span id="live-text">Connecting</span></span>
+    <span class="pill" id="chain">Checking logs</span>
+    <span class="updated" id="updated"></span>
+  </div>
+  <svg class="bats" viewBox="0 0 200 60" aria-hidden="true" focusable="false">
+    <path d="M10 30c8-10 16-6 20 0 4-6 12-10 20 0-6-2-10 2-10 6-3-4-7-4-10-2-3-2-7-2-10 2 0-4-4-8-10-6z"/>
+    <path d="M120 22c8-8 18-4 22 2 4-6 14-8 20 0-6-2-10 2-10 6-3-4-7-4-10-2-3-2-7-2-10 2 0-4-4-8-12-8z"/>
+  </svg>
+</header>
+
+<main>
+  <section id="alert" class="alert" hidden>
+    <strong id="alert-title"></strong>
+    <span id="alert-body"></span>
+  </section>
+
+  <section class="cards" aria-label="Totals">
+    <article class="card"><h2>Running</h2><p class="num" id="t-running">–</p><p class="hint">sessions now</p></article>
+    <article class="card warn-card"><h2>Findings</h2><p class="num" id="t-findings">–</p><p class="hint">WARN and above</p></article>
+    <article class="card crit-card"><h2>Critical</h2><p class="num" id="t-critical">–</p><p class="hint">needs a look</p></article>
+    <article class="card high-card"><h2>High</h2><p class="num" id="t-high">–</p><p class="hint">review soon</p></article>
+    <article class="card"><h2>Decoy reads</h2><p class="num" id="t-decoy">–</p><p class="hint">fake keys opened</p></article>
+    <article class="card"><h2>Network blocked</h2><p class="num" id="t-net">–</p><p class="hint">refused by policy</p></article>
+    <article class="card"><h2>Packages refused</h2><p class="num" id="t-reg">–</p><p class="hint">registry guard</p></article>
+    <article class="card"><h2>Monitor events</h2><p class="num" id="t-mon">–</p><p class="hint">programs and connects</p></article>
+  </section>
+
+  <div class="columns">
+    <section class="panel feed" aria-labelledby="feed-title">
+      <div class="panel-head">
+        <h2 id="feed-title">Live feed</h2>
+        <span class="muted" id="feed-count"></span>
+      </div>
+      <ol id="feed" class="events" tabindex="0"></ol>
+      <p class="empty" id="feed-empty" hidden>Nothing yet. Start a session with <code>pumpkin-shell kiro</code>.</p>
+    </section>
+
+    <section class="panel sessions" aria-labelledby="sessions-title">
+      <div class="panel-head">
+        <h2 id="sessions-title">Sessions</h2>
+        <span class="muted" id="session-count"></span>
+      </div>
+      <ul id="sessions" class="session-list"></ul>
+      <p class="empty" id="sessions-empty" hidden>No sessions yet.</p>
+    </section>
+  </div>
+
+  <div class="columns">
+    <section class="panel" aria-labelledby="rules-title">
+      <div class="panel-head"><h2 id="rules-title">Top rules</h2></div>
+      <ul id="rules" class="bars"></ul>
+    </section>
+    <section class="panel" aria-labelledby="layers-title">
+      <div class="panel-head"><h2 id="layers-title">Where it happened</h2></div>
+      <ul id="layers" class="bars"></ul>
+    </section>
+  </div>
+</main>
+
+<footer>
+  <p>Local only. This page is served on 127.0.0.1, is read-only, and loads nothing from the internet.</p>
+  <p class="muted">To act on a finding, use the terminal: <code>pumpkin-shell review</code>, <code>resume</code> or <code>kill</code>.</p>
+</footer>
+
+<script src="/app.js"></script>
+</body>
+</html>

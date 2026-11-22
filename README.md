@@ -210,6 +210,7 @@ alerts, and it asks you when a site is not on the allowlist.
 | `pumpkin-shell trust [PATH]` | Pins the repo's `pumpkin-shell.toml` after you have read it. |
 | `pumpkin-shell policy check [PATH]` | Prints the effective policy for a repo, and fails if the repo policy is not applied or tries to loosen a rule. |
 | `pumpkin-shell log verify FILE` | Checks a session log's chain, signatures and checkpoint. |
+| `pumpkin-shell dashboard [--port N]` | Live read-only page on 127.0.0.1 (default 8765). |
 
 Where things live:
 
@@ -217,6 +218,19 @@ Where things live:
 - Sessions, snapshots and logs: `~/.local/share/pumpkin-shell/sessions/`.
 
 ---
+
+## Live dashboard
+
+```sh
+pumpkin-shell dashboard          # then open http://127.0.0.1:8765/
+```
+
+Pumpkin-Shell Watch shows sessions, findings by severity, network blocks,
+decoy reads, refused packages and each log's check, and refreshes every two
+seconds. It listens on 127.0.0.1 only, is read-only, and loads nothing from the
+internet. A tampered log is shown as failed.
+
+![Pumpkin-Shell Watch](docs/dashboard.png)
 
 ## How it works
 
@@ -320,7 +334,8 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | in progress |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0) |
+| 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 
 The decisions and their reasons are in [docs/DECISIONS.md](docs/DECISIONS.md).
