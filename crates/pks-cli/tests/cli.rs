@@ -4,8 +4,12 @@ use std::io;
 use std::process::{Command, Output};
 
 fn run(args: &[&str]) -> io::Result<Output> {
+    // Clap wraps command names in color codes when color is forced, which breaks
+    // substring checks such as "kiro [PATH]". Turn color off for every run.
     Command::new(env!("CARGO_BIN_EXE_pumpkin-shell"))
         .args(args)
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
         .output()
 }
 
