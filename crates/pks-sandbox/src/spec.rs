@@ -85,6 +85,9 @@ pub struct LaunchSpec {
     /// while the IDE runs (`DISPLAY=` and `XAUTHORITY=` lines), so the host
     /// can read and set the sandbox clipboard. Removed when the IDE exits.
     pub display_file: Option<PathBuf>,
+    /// The package mirror's Unix socket on the host (Phase 14). `None` runs
+    /// without a mirror. When set, npm and pip are pointed at the mirror.
+    pub mirror_socket: Option<PathBuf>,
 }
 
 fn refuse(message: impl Into<String>) -> SandboxError {
@@ -326,6 +329,7 @@ mod tests {
                 pid_file: None,
                 broker_dir: None,
                 display_file: None,
+                mirror_socket: None,
             };
             Ok(Self { _dir: dir, spec })
         }

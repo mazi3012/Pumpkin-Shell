@@ -193,6 +193,7 @@ impl Layout {
             pid_file: None,
             broker_dir: None,
             display_file: None,
+            mirror_socket: None,
         }
     }
 }
@@ -973,5 +974,355 @@ c.close()\n",
         greeting, "hello",
         "the callback did not reach the IDE listener"
     );
+    Ok(())
+}
+
+// --- package mirror (Phase 14) -----------------------------------------------
+
+/// A registry with one old version of `pkg`.
+struct OneOldVersion;
+
+impl pks_registry::mirror::Source for OneOldVersion {
+    fn fetch(
+        &self,
+        _url: &str,
+        _accept: Option<&str>,
+    ) -> Result<Vec<u8>, pks_registry::upstream::UpstreamError> {
+        Ok(serde_json::json!({
+            "name": "pkg",
+            "dist-tags": { "latest": "1.0.0" },
+            "versions": { "1.0.0": { "dist": { "tarball": "https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz" } } },
+            "time": { "created": "2014-01-01T00:00:00Z", "1.0.0": "2014-01-01T00:00:00Z" },
+        })
+        .to_string()
+        .into_bytes())
+    }
+}
+
+/// OSV with nothing to report.
+struct NoMalware;
+
+impl pks_registry::osv::Advisories for NoMalware {
+    fn check(&self, _: &str, _: &str, _: &str) -> pks_registry::osv::Verdict {
+        pks_registry::osv::Verdict::Clean
+    }
+}
+
+/// The current time in Unix seconds.
+fn now_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// The sandbox reaches the mirror on its loopback port, which the relay passes
+/// to the mirror's Unix socket on the host.
+#[test]
+fn the_sandbox_reaches_the_mirror_on_its_loopback_port() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        OneOldVersion,
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(|| 1_800_000_000),
+        Box::new(NoMalware),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = "curl -s -o /workspace/doc.json -w '%{http_code}' http://127.0.0.1:3130/npm/pkg > /workspace/status.txt || exit 5\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    assert!(status?.success());
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("status.txt"))?.trim(),
+        "200"
+    );
+    assert!(fs::read_to_string(layout.repo.join("doc.json"))?.contains("\"versions\""));
+    Ok(())
+}
+
+/// PRD FR-REG, end to end with the real registry: npm inside the sandbox
+/// installs a real package through the mirror, and a direct connection to the
+/// registry is refused. Needs internet access to registry.npmjs.org.
+#[test]
+fn npm_installs_a_real_package_through_the_mirror_and_direct_access_is_refused() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = format!(
+        "{}{}",
+        host_tool_path(&["npm", "node"])?,
+        "cd /workspace || exit 2\nnpm config get registry > /workspace/registry.txt || exit 3\nnpm install left-pad@1.3.0 --no-audit --no-fund > /workspace/npm.log 2>&1 || exit 4\ntest -f /workspace/node_modules/left-pad/package.json || exit 5\ncurl -s -m 15 https://registry.npmjs.org/left-pad > /dev/null 2>&1; echo $? > /workspace/direct.txt\nexit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    let status = status?;
+    let log = fs::read_to_string(layout.repo.join("npm.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; npm log:\n{log}");
+    let registry = fs::read_to_string(layout.repo.join("registry.txt"))?;
+    assert!(
+        registry.contains("127.0.0.1:3130"),
+        "npm does not use the mirror: {registry}"
+    );
+    let direct = fs::read_to_string(layout.repo.join("direct.txt"))?;
+    assert_ne!(direct.trim(), "0", "a direct registry connection succeeded");
+    Ok(())
+}
+
+/// PRD FR-REG, end to end with the real PyPI: pip inside the sandbox installs
+/// a real package through the mirror. Needs internet access to pypi.org.
+#[test]
+fn pip_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+
+    let script = "cd /workspace || exit 2\npython3 -m pip install --no-deps --target /workspace/pylib requests==2.34.2 > /workspace/pip.log 2>&1 || exit 4\ntest -d /workspace/pylib/requests || exit 5\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    let status = status?;
+    let log = fs::read_to_string(layout.repo.join("pip.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; pip log:\n{log}");
+    Ok(())
+}
+
+/// The sandbox's PATH is `/usr/bin:/bin`. On some hosts (GitHub's Ubuntu
+/// runners, for example) `npm` and `node` live in `/usr/local/bin`, which the
+/// sandbox does see (it binds `/usr` read-only) but does not search. This
+/// returns a script line that adds the directories of `tools` to the front of
+/// PATH. It is empty when `tools` is empty.
+fn host_tool_path(tools: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    if tools.is_empty() {
+        return Ok(String::new());
+    }
+    let search = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<String> = Vec::new();
+    for tool in tools {
+        let dir = std::env::split_paths(&search)
+            .find(|dir| dir.join(tool).is_file())
+            .ok_or_else(|| format!("{tool} is not installed on the host"))?;
+        let dir = dir
+            .to_str()
+            .ok_or("a tool directory is not UTF-8")?
+            .to_owned();
+        if dir.contains(['"', '$', '`', '\\']) {
+            return Err(format!("{dir} has a character the script cannot quote").into());
+        }
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    Ok(format!("export PATH=\"{}:$PATH\"\n", dirs.join(":")))
+}
+
+/// Runs `script` in the sandbox with the package mirror on, and stops the
+/// mirror afterwards. `tools` are host programs the script needs on PATH.
+/// Needs internet access to the registries.
+fn run_through_mirror(
+    layout: &Layout,
+    tools: &[&str],
+    script: &str,
+) -> Result<std::process::ExitStatus, Box<dyn std::error::Error>> {
+    let script = format!("{}{script}", host_tool_path(tools)?);
+    let mirror_dir = tempfile::tempdir()?;
+    let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
+    let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
+    let osv = pks_registry::osv::Osv::new(Arc::clone(&upstream), Box::new(now_seconds));
+    let mirror = Arc::new(pks_registry::mirror::Mirror::new(
+        Arc::clone(&upstream),
+        pks_sandbox::linux::bwrap::MIRROR_URL,
+        Box::new(now_seconds),
+        Box::new(osv),
+    ));
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    let server = std::thread::spawn(move || {
+        pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
+    });
+    let mut spec = layout.spec_running(&script);
+    spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = server.join();
+    Ok(status?)
+}
+
+/// Asserts the sandbox run succeeded, printing the client log if not.
+fn assert_client_ok(
+    layout: &Layout,
+    status: std::process::ExitStatus,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let log = fs::read_to_string(layout.repo.join("client.log")).unwrap_or_default();
+    assert!(status.success(), "exit {status}; client log:\n{log}");
+    Ok(())
+}
+
+/// PRD FR-REG, clients: pnpm 12.21.0 is installed through the mirror and
+/// then installs a real package. Needs internet access to registry.npmjs.org.
+#[test]
+fn pnpm_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install pnpm@12.21.0 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+/home/sandbox/tools/node_modules/.bin/pnpm --version > /workspace/version.txt || exit 5
+/home/sandbox/tools/node_modules/.bin/pnpm config get registry > /workspace/registry.txt || exit 6
+/home/sandbox/tools/node_modules/.bin/pnpm add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 7
+test -f node_modules/left-pad/package.json || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "12.21.0"
+    );
+    let registry = fs::read_to_string(layout.repo.join("registry.txt"))?;
+    assert!(
+        registry.contains("127.0.0.1:3130"),
+        "pnpm does not use the mirror: {registry}"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: yarn 1.22.22 (the npm `latest` tag of `yarn`) is
+/// installed through the mirror and then installs a real package.
+#[test]
+fn yarn_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install yarn@1.22.22 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+/home/sandbox/tools/node_modules/.bin/yarn --version > /workspace/version.txt || exit 5
+/home/sandbox/tools/node_modules/.bin/yarn add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 6
+test -f node_modules/left-pad/package.json || exit 7
+exit 0
+"#;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "1.22.22"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: bun 1.4.4 is installed through the mirror and then
+/// installs a real package. The `bun` npm package fetches its binary in a
+/// postinstall script, which the sandbox keeps off, so the platform package
+/// that ships the binary is installed instead. Needs internet access to
+/// registry.npmjs.org.
+#[test]
+fn bun_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && cd /home/sandbox/tools || exit 2
+npm install @oven/bun-linux-x64@1.4.4 --no-audit --no-fund > /workspace/client.log 2>&1 || exit 3
+BUN=/home/sandbox/tools/node_modules/@oven/bun-linux-x64/bin/bun
+mkdir -p /workspace/app && cd /workspace/app || exit 4
+echo '{"name":"app","version":"1.0.0"}' > package.json
+$BUN --version > /workspace/version.txt || exit 5
+$BUN add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 6
+test -f node_modules/left-pad/package.json || exit 7
+exit 0
+"#;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
+    assert_client_ok(&layout, status)?;
+    assert_eq!(
+        fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
+        "1.4.4"
+    );
+    Ok(())
+}
+
+/// PRD FR-REG, clients: poetry 2.5.1 is installed through the mirror. Its
+/// PyPI source is replaced by the mirror as a primary source, so it resolves
+/// `requests` through the mirror only. Needs internet access to pypi.org.
+#[test]
+fn poetry_resolves_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && python3 -m venv /home/sandbox/tools/poetry-venv || exit 2
+/home/sandbox/tools/poetry-venv/bin/pip install poetry==2.5.1 > /workspace/client.log 2>&1 || exit 3
+/home/sandbox/tools/poetry-venv/bin/poetry --version > /workspace/version.txt || exit 4
+mkdir -p /workspace/app && cd /workspace/app || exit 5
+printf '[project]\nname = "app"\nversion = "0.1.0"\nrequires-python = ">=3.10"\ndependencies = []\n' > pyproject.toml
+/home/sandbox/tools/poetry-venv/bin/poetry source add --priority=primary mirror http://127.0.0.1:3130/pypi/simple/ >> /workspace/client.log 2>&1 || exit 6
+/home/sandbox/tools/poetry-venv/bin/poetry add requests==2.34.2 --no-interaction >> /workspace/client.log 2>&1 || exit 7
+grep -q 'version = "2.34.2"' poetry.lock || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, &[], script)?;
+    assert_client_ok(&layout, status)?;
+    let version = fs::read_to_string(layout.repo.join("version.txt"))?;
+    assert!(version.contains("2.5.1"), "{version}");
+    Ok(())
+}
+
+/// PRD FR-REG, clients: uv 0.13.9 is installed through the mirror and then
+/// installs a real package with `UV_DEFAULT_INDEX` pointing at the mirror.
+/// Needs internet access to pypi.org.
+#[test]
+fn uv_installs_a_real_package_through_the_mirror() -> TestResult {
+    let layout = Layout::new()?;
+    let script = r#"
+mkdir -p /home/sandbox/tools && python3 -m venv /home/sandbox/tools/uv-venv || exit 2
+/home/sandbox/tools/uv-venv/bin/pip install uv==0.13.9 > /workspace/client.log 2>&1 || exit 3
+/home/sandbox/tools/uv-venv/bin/uv --version > /workspace/version.txt || exit 4
+mkdir -p /workspace/app && cd /workspace/app || exit 5
+/home/sandbox/tools/uv-venv/bin/uv venv .venv >> /workspace/client.log 2>&1 || exit 6
+/home/sandbox/tools/uv-venv/bin/uv pip install --python .venv/bin/python requests==2.34.2 >> /workspace/client.log 2>&1 || exit 7
+ls -d .venv/lib/python3*/site-packages/requests > /dev/null 2>&1 || exit 8
+exit 0
+"#;
+    let status = run_through_mirror(&layout, &[], script)?;
+    assert_client_ok(&layout, status)?;
+    let version = fs::read_to_string(layout.repo.join("version.txt"))?;
+    assert!(version.starts_with("uv 0.13.9"), "{version}");
     Ok(())
 }

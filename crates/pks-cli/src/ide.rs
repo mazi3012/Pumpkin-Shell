@@ -125,6 +125,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         pid_file: Some(session.dir.join(pks_detect::PID_FILE)),
         broker_dir: Some(session.dir.join("broker")),
         display_file: Some(session.dir.join(crate::clipboard::DISPLAY_FILE)),
+        mirror_socket: Some(session.dir.join("mirror.sock")),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -378,6 +379,32 @@ impl Session {
             ),
         }
 
+        // The package mirror (Phase 14). It answers the sandbox's npm and pip
+        // through the socket below. Registry downloads and OSV queries go out
+        // through one upstream client. If the client cannot start, the session
+        // does not start: it would have no way to check packages.
+        let mirror_socket = dir.join("mirror.sock");
+        let mirror_listener = UnixListener::bind(&mirror_socket)
+            .map_err(|e| format!("cannot open the mirror socket: {e}"))?;
+        let upstream = std::sync::Arc::new(
+            pks_registry::upstream::Upstream::new()
+                .map_err(|e| format!("cannot start the package mirror: {e}"))?,
+        );
+        let osv =
+            pks_registry::osv::Osv::new(std::sync::Arc::clone(&upstream), Box::new(unix_seconds));
+        let mirror = std::sync::Arc::new(pks_registry::mirror::Mirror::new(
+            std::sync::Arc::clone(&upstream),
+            pks_sandbox::linux::bwrap::MIRROR_URL,
+            Box::new(unix_seconds),
+            Box::new(osv),
+        ));
+        let mirror_record = mirror_recorder(Arc::clone(&log), effective.hash());
+        let mirror_stop = Arc::clone(&broker_stop);
+        std::thread::spawn(move || {
+            let _ =
+                pks_registry::server::serve(mirror_listener, mirror, mirror_record, mirror_stop);
+        });
+
         let socket = dir.join("proxy.sock");
         let listener = UnixListener::bind(&socket)
             .map_err(|e| format!("cannot open the proxy socket: {e}"))?;
@@ -524,6 +551,43 @@ fn verdict_of(rule: &str, message: &str) -> &'static str {
         "NET-LARGE-UPLOAD" => "warn",
         _ => "block",
     }
+}
+
+/// Seconds since the Unix epoch, for the registry checks. Zero when the clock
+/// is before 1970.
+#[cfg(target_os = "linux")]
+fn unix_seconds() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| {
+            i64::try_from(elapsed.as_secs()).unwrap_or(i64::MAX)
+        })
+}
+
+/// Writes the package mirror's notes to the session log under layer
+/// `registry`. A note reads "RULE detail"; the detail is the target.
+#[cfg(target_os = "linux")]
+fn mirror_recorder(
+    log: std::sync::Arc<std::sync::Mutex<Option<pks_core::log::Logger>>>,
+    policy_hash: String,
+) -> pks_registry::server::Record {
+    std::sync::Arc::new(move |note: &str| {
+        let (rule, target) = note.split_once(' ').unwrap_or((note, ""));
+        if let Ok(mut guard) = log.lock()
+            && let Some(logger) = guard.as_mut()
+        {
+            let _ = logger.append(
+                &Record {
+                    policy_hash: &policy_hash,
+                    layer: "registry",
+                    target,
+                    rule,
+                    verdict: "note",
+                },
+                now_ms(),
+            );
+        }
+    })
 }
 
 #[cfg(target_os = "linux")]
@@ -699,6 +763,28 @@ mod tests {
     }
 
     #[test]
+    fn a_mirror_note_is_written_to_the_session_log_under_the_registry_layer() {
+        use std::sync::{Arc, Mutex};
+        let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("{e}"));
+        let key = pks_core::keys::load_or_create_signing_key(&dir.path().join("keys"))
+            .unwrap_or_else(|e| panic!("{e}"));
+        let path = dir.path().join("session.jsonl");
+        let logger = pks_core::log::Logger::create(&path, key, "test-session")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let record = mirror_recorder(Arc::new(Mutex::new(Some(logger))), "hash-1".to_owned());
+        record("REG-COOLDOWN pkg@2.0.0 hidden");
+        let text = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{e}"));
+        let last = text.lines().last().unwrap_or("");
+        let line: serde_json::Value =
+            serde_json::from_str(last).unwrap_or_else(|e| panic!("{e}: {last}"));
+        assert_eq!(line["layer"], "registry", "{last}");
+        assert_eq!(line["rule"], "REG-COOLDOWN", "{last}");
+        assert_eq!(line["target"], "pkg@2.0.0 hidden", "{last}");
+        assert_eq!(line["verdict"], "note", "{last}");
+        assert_eq!(line["policy_hash"], "hash-1", "{last}");
+    }
+
+    #[test]
     fn an_empty_line_or_end_of_input_denies() {
         assert_eq!(answer("\n"), Some(Answer::Deny));
         assert_eq!(answer(""), Some(Answer::Deny));
@@ -763,23 +849,29 @@ pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
 pub fn sandbox_init(
     rw: &[PathBuf],
     ro: &[PathBuf],
-    relay_listen: Option<std::net::SocketAddr>,
-    relay_socket: Option<PathBuf>,
-    relay_host_ports: &[u16],
+    proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
+    mirror: Option<(std::net::SocketAddr, PathBuf)>,
     callback: Option<(PathBuf, std::net::SocketAddr)>,
     command: &[std::ffi::OsString],
 ) -> ExitCode {
-    let relay = match (relay_listen, relay_socket) {
-        (Some(listen), Some(socket)) => Some(pks_sandbox::linux::init::Relay {
+    let mut relays = Vec::new();
+    if let Some((listen, socket, host_ports)) = proxy {
+        relays.push(pks_sandbox::linux::init::Relay {
             listen,
             socket,
-            host_ports: relay_host_ports.to_vec(),
-        }),
-        _ => None,
-    };
+            host_ports,
+        });
+    }
+    if let Some((listen, socket)) = mirror {
+        relays.push(pks_sandbox::linux::init::Relay {
+            listen,
+            socket,
+            host_ports: Vec::new(),
+        });
+    }
     let callback =
         callback.map(|(socket, target)| pks_sandbox::linux::init::Callback { socket, target });
-    let error = pks_sandbox::linux::init::run(rw, ro, command, relay.as_ref(), callback.as_ref());
+    let error = pks_sandbox::linux::init::run(rw, ro, command, &relays, callback.as_ref());
     eprintln!("sandbox-init: {error}");
     ExitCode::from(126)
 }
@@ -806,9 +898,8 @@ pub fn sandbox_callback(_socket: &Path, _target: std::net::SocketAddr) -> ExitCo
 pub fn sandbox_init(
     _rw: &[PathBuf],
     _ro: &[PathBuf],
-    _relay_listen: Option<std::net::SocketAddr>,
-    _relay_socket: Option<PathBuf>,
-    _relay_host_ports: &[u16],
+    _proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
+    _mirror: Option<(std::net::SocketAddr, PathBuf)>,
     _callback: Option<(PathBuf, std::net::SocketAddr)>,
     _command: &[std::ffi::OsString],
 ) -> ExitCode {

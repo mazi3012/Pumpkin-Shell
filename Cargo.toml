@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/pks-core", "crates/pks-scan", "crates/pks-sandbox", "crates/pks-proxy", "crates/pks-detect", "crates/pks-cli"]
+members = ["crates/pks-core", "crates/pks-scan", "crates/pks-sandbox", "crates/pks-proxy", "crates/pks-detect", "crates/pks-registry", "crates/pks-cli"]
 
 [workspace.package]
 version = "0.0.0"
@@ -35,12 +35,32 @@ serde = { version = "1.0.229", features = ["derive"] }
 # last commit 2026-07-27, Apache-2.0 OR BSD-3-Clause, not yanked). Used for the
 # TIOCSTI seccomp filter only.
 seccompiler = "0.5.0"
+# Phase 14 additions checked 2026-11-21 (see DECISIONS.md): sha1 0.11.0,
+# strsim 0.11.1, time 0.3.55. All MIT or MIT OR Apache-2.0. Later steps add
+# more, each recorded in DECISIONS.md when it is added.
 serde_json = "1.0.154"
+sha1 = "0.11.0"
 sha2 = "0.11.1"
+strsim = "0.11.1"
 tempfile = "3.27.0"
+time = { version = "0.3.55", default-features = false, features = ["std", "parsing", "formatting"] }
 thiserror = "2.0.21"
 toml = "1.2.1"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
+# Phase 14 TLS client (step 2), checked on crates.io 2026-11-21 (see DECISIONS.md):
+# all stable, none yanked. tower-service 0.3.3 is older than six months; it is
+# a small, widely used Tokio project crate (stable-library exception).
+aws-lc-rs = { version = "1.19.0", default-features = false, features = ["aws-lc-sys"] }
+http = "1.5.0"
+http-body-util = "0.1.5"
+hyper = { version = "1.12.0", default-features = false, features = ["client", "http1"] }
+hyper-rustls = { version = "0.27.10", default-features = false, features = ["native-tokio", "http1", "tls12", "aws-lc-rs"] }
+hyper-util = { version = "0.1.21", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+rustls = { version = "0.23.46", default-features = false, features = ["std", "aws_lc_rs", "logging", "tls12"] }
+rustls-native-certs = "0.8.5"
+tokio = { version = "1.54.1", default-features = false, features = ["rt", "net", "time"] }
+tower-service = "0.3.3"
 
 [workspace.lints.rust]
 # tech.md: no `unsafe` except in thin, documented FFI wrappers. A crate that

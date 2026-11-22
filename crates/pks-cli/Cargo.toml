@@ -15,6 +15,8 @@ path = "src/main.rs"
 clap.workspace = true
 pks-core = { path = "../pks-core", version = "0.0.0" }
 pks-detect = { path = "../pks-detect", version = "0.0.0" }
+# The package mirror (Phase 14). Linux only, like the sandbox.
+pks-registry = { path = "../pks-registry", version = "0.0.0" }
 pks-scan = { path = "../pks-scan", version = "0.0.0" }
 serde.workspace = true
 serde_json.workspace = true

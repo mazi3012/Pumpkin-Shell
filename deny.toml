@@ -18,7 +18,7 @@ ignore = []
 # Permissive licenses only. Add a license here only after checking it, and
 # record why in docs/DECISIONS.md. BSD-3-Clause was added for ed25519-dalek and
 # curve25519-dalek (2026-11-19).
-allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "Unicode-3.0"]
+allow = ["MIT", "Apache-2.0", "BSD-3-Clause", "ISC", "Unicode-3.0"]
 confidence-threshold = 0.8
 
 [licenses.private]
