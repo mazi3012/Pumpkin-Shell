@@ -99,6 +99,29 @@ only then installs it with `apt` (it asks for your password). If the check
 fails, nothing is installed. To check the download without installing, add
 `--check-only`. Read the script first if you want to: it is short.
 
+### Quick start (copy-paste)
+
+If you just want to try Pumpkin-Shell quickly, paste these commands:
+
+```sh
+# 1. Install prerequisites
+sudo apt install bubblewrap xserver-xephyr xauth
+
+# 2. Clone and build Pumpkin-Shell
+git clone https://github.com/mazi3012/pumpkin-shell.git
+cd pumpkin-shell
+cargo build --release
+
+# 3. Check your system
+./target/release/pumpkin-shell doctor
+
+# 4. Launch an IDE
+./target/release/pumpkin-shell ide kiro ~/my-project
+```
+
+This builds Pumpkin-Shell from source and launches Kiro in the sandbox. The
+sandbox protects your SSH keys, cloud tokens, and network access.
+
 ### Option 1: install the Debian package by hand (Ubuntu 24.04+, Debian 13+)
 
 1. Download `pumpkin-shell_1.0.0_amd64.deb` from the
