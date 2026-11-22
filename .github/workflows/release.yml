@@ -94,9 +94,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" \
+          # This job does not check out the repository, so name it explicitly.
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" \
             --notes "Escape corpus v1: see docs/ESCAPE-CORPUS.md." dist/* \
-            || gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+            || gh release upload "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
   provenance:
     # SLSA's generator is referenced by tag, as its documentation requires.
