@@ -28,7 +28,7 @@ jobs:
       - name: Install cargo-deny and cargo-audit
         uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2.90.6
         with:
-          tool: cargo-deny@0.21.0,cargo-audit@0.23.0
+          tool: cargo-deny@0.21.0,cargo-audit@0.23.0,cargo-vet@0.10.3
 
       # The sandbox tests run real bubblewrap, Xephyr and xauth (Linux only).
       # Ubuntu 24.04 restricts unprivileged user namespaces with AppArmor, so
@@ -78,6 +78,10 @@ jobs:
         run: cargo run --locked --quiet -- scan --ci tests/fixtures/scan/clean
       - name: cargo-deny
         run: cargo deny check
+      # Every dependency is either audited (an imported or local audit) or listed
+      # as an exemption in supply-chain/. A new unvetted crate fails this step.
+      - name: cargo-vet
+        run: cargo vet --locked
 
       - name: cargo-audit
         run: cargo audit

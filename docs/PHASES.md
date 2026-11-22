@@ -24,10 +24,10 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 12 | Brokers | T10 | Linux | | done (PR #12 merged; Kiro sign-in and git push checked by hand 2026-11-21; Windows CI green) |
 | 13 | Code-OSS adapter, VS Code, Cursor, Windsurf | T11 | Linux | | deferred: after first release |
 | 14 | npm and PyPI mirror | T12 | Linux | | done (PR #13 merged; 7 clients through the mirror, scenario 5 accepted as mirror-level test) |
-| 15 | Linux exec/connect auditing | T13 | Linux | | in-progress (branch `phase-15-exec-connect-auditing`; local gate green: 541 tests, clippy, fmt, cargo deny; PR not yet opened) |
+| 15 | Linux exec/connect auditing | T13 | Linux | | done (PR #14 merged; scenarios 7 and 9 tests, fail-closed tests; first real Kiro check 2026-11-22) |
 | 16 | Windows enforcement | T14 | Windows | | deferred: after first release |
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
-| 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | todo |
+| 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | in-progress (branch `phase-18-release`) |
 
 **First-release scope (set 2026-11-21, see DECISIONS.md):** Linux and Kiro only. Phases 6, 13, 16 and 17 are deferred until after the first release. Phase 6 keeps its number, and it is out of order on purpose. The PRD runs the Windows proof of concept early, so the design can change before anything depends on it. Nothing in the first release waits on Phase 6.
 

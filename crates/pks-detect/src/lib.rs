@@ -11,4 +11,4 @@ pub mod notify;
 pub mod session;
 
 pub use notify::Notifier;
-pub use session::{read_pid, SessionInfo, PAUSED_FILE, PID_FILE, REPO_FILE};
+pub use session::{PAUSED_FILE, PID_FILE, REPO_FILE, SessionInfo, read_pid};

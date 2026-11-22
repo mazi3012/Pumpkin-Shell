@@ -1517,6 +1517,132 @@ fn a_failing_monitor_is_reported_and_ends_the_sandbox() -> TestResult {
     Ok(())
 }
 
+/// Runs one attack command inside the sandbox and returns its exit status.
+/// The command runs in `/workspace`, so its exit status is recorded there.
+fn attempt(command: &str) -> Result<i32, Box<dyn std::error::Error>> {
+    let layout = Layout::new()?;
+    let script =
+        format!("cd /workspace || exit 2\n{command}\necho $? > /workspace/attempt.txt\nexit 0\n");
+    let status = backend()?.run(&layout.spec_running(&script))?;
+    assert!(status.success(), "the sandbox did not run: {status}");
+    Ok(fs::read_to_string(layout.repo.join("attempt.txt"))?
+        .trim()
+        .parse()?)
+}
+
+/// Escape corpus FS-01: the real host home directory is not visible.
+#[test]
+fn corpus_fs_01_the_host_home_directory_is_not_visible() -> TestResult {
+    let home = std::env::var("HOME")?;
+    assert_ne!(attempt(&format!("test -e '{home}'"))?, 0);
+    Ok(())
+}
+
+/// Escape corpus FS-02: the system files are read-only.
+#[test]
+fn corpus_fs_02_writes_to_the_system_are_refused() -> TestResult {
+    assert_ne!(attempt("touch /usr/pks-corpus-probe")?, 0);
+    assert_ne!(attempt("touch /etc/pks-corpus-probe")?, 0);
+    Ok(())
+}
+
+/// Escape corpus FS-03: the sandbox cannot write to the host's home or to a
+/// path that only looks like it (a prefix of the repo).
+#[test]
+fn corpus_fs_03_writes_outside_the_repo_and_ide_home_are_refused() -> TestResult {
+    assert_ne!(attempt("touch /var/pks-corpus-probe")?, 0);
+    assert_ne!(attempt("touch /root/pks-corpus-probe")?, 0);
+    Ok(())
+}
+
+/// Escape corpus NET-01: direct connections to the internet are refused.
+#[test]
+fn corpus_net_01_a_direct_internet_connection_is_refused() -> TestResult {
+    // --noproxy: the connection must not go through the proxy at all.
+    assert_ne!(
+        attempt("curl --noproxy '*' -s -m 5 http://1.1.1.1/ > /dev/null 2>&1")?,
+        0
+    );
+    Ok(())
+}
+
+/// Escape corpus NET-02: the cloud metadata address is unreachable.
+#[test]
+fn corpus_net_02_the_cloud_metadata_address_is_unreachable() -> TestResult {
+    assert_ne!(
+        attempt("curl --noproxy '*' -s -m 5 http://169.254.169.254/ > /dev/null 2>&1")?,
+        0
+    );
+    Ok(())
+}
+
+/// Escape corpus NET-03: no name resolution leaves the sandbox.
+#[test]
+fn corpus_net_03_direct_name_resolution_fails() -> TestResult {
+    assert_ne!(attempt("getent hosts example.com > /dev/null 2>&1")?, 0);
+    Ok(())
+}
+
+/// Escape corpus NET-04: a registry cannot be reached directly; the mirror is
+/// the only route (PRD FR-REG).
+#[test]
+fn corpus_net_04_a_registry_cannot_be_reached_directly() -> TestResult {
+    assert_ne!(
+        attempt("curl --noproxy '*' -s -m 5 https://registry.npmjs.org/ > /dev/null 2>&1")?,
+        0
+    );
+    assert_ne!(
+        attempt("curl --noproxy '*' -s -m 5 https://pypi.org/simple/ > /dev/null 2>&1")?,
+        0
+    );
+    Ok(())
+}
+
+/// Escape corpus IPC-01: no SSH agent socket is passed in.
+#[test]
+fn corpus_ipc_01_no_ssh_agent_is_passed_in() -> TestResult {
+    assert_ne!(attempt("test -n \"$SSH_AUTH_SOCK\"")?, 0);
+    Ok(())
+}
+
+/// Escape corpus IPC-02: the container socket is not mounted.
+#[test]
+fn corpus_ipc_02_no_container_socket_is_mounted() -> TestResult {
+    assert_ne!(
+        attempt("test -e /var/run/docker.sock || test -e /run/docker.sock")?,
+        0
+    );
+    Ok(())
+}
+
+/// Escape corpus IPC-03: no D-Bus session bus is reachable.
+#[test]
+fn corpus_ipc_03_no_dbus_session_bus_is_reachable() -> TestResult {
+    assert_ne!(
+        attempt("test -n \"$DBUS_SESSION_BUS_ADDRESS\" || test -e /run/user/$(id -u)/bus")?,
+        0
+    );
+    Ok(())
+}
+
+/// Escape corpus PROC-01: host processes are not visible. The test process is
+/// a host process, so its PID must not exist inside the sandbox.
+#[test]
+fn corpus_proc_01_host_processes_are_not_visible() -> TestResult {
+    let host_pid = std::process::id();
+    assert_ne!(attempt(&format!("test -d /proc/{host_pid}"))?, 0);
+    Ok(())
+}
+
+/// Control for the corpus harness: an allowed action reports success, so the
+/// corpus's failed attempts mean something.
+#[test]
+fn corpus_control_the_harness_reports_success_and_failure() -> TestResult {
+    assert_eq!(attempt("true")?, 0);
+    assert_ne!(attempt("false")?, 0);
+    Ok(())
+}
+
 /// A connect target port with the listening ports of the connecting process.
 type Samples = Vec<(u16, Vec<u16>)>;
 

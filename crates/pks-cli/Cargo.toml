@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+license.workspace = true
 repository.workspace = true
 
 [[bin]]
@@ -13,19 +14,19 @@ path = "src/main.rs"
 
 [dependencies]
 clap.workspace = true
-pks-core = { path = "../pks-core", version = "0.0.0" }
-pks-detect = { path = "../pks-detect", version = "0.0.0" }
+pks-core = { path = "../pks-core", version = "1.0.0" }
+pks-detect = { path = "../pks-detect", version = "1.0.0" }
 # The package mirror (Phase 14). Linux only, like the sandbox.
-pks-registry = { path = "../pks-registry", version = "0.0.0" }
-pks-scan = { path = "../pks-scan", version = "0.0.0" }
+pks-registry = { path = "../pks-registry", version = "1.0.0" }
+pks-scan = { path = "../pks-scan", version = "1.0.0" }
 serde.workspace = true
 serde_json.workspace = true
 
 # Linux-only probes (doctor). Windows gets its own probes in Phase 16.
 [target.'cfg(target_os = "linux")'.dependencies]
 # Sandbox (Phase 8); Windows gets its backend in Phase 16.
-pks-sandbox = { path = "../pks-sandbox", version = "0.0.0" }
-pks-proxy = { path = "../pks-proxy", version = "0.0.0" }
+pks-sandbox = { path = "../pks-sandbox", version = "1.0.0" }
+pks-proxy = { path = "../pks-proxy", version = "1.0.0" }
 landlock.workspace = true
 libc.workspace = true
 
