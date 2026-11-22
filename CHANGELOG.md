@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.0.3 - 2026-11-23
+
+### Added
+- `pumpkin-shell kiro` and `pumpkin-shell ide` without a folder open a zenity
+  window to choose one. The command to type next time is printed first. If
+  zenity is not installed, the command prints the usage line and exits with 2.
+
+### Changed
+- The folder argument is optional. It no longer defaults to the current folder,
+  so `pumpkin-shell kiro` with no argument opens the window. Use
+  `pumpkin-shell kiro .` for the current folder.
+
 ## 1.0.2 - 2026-11-23
 
 ### Added

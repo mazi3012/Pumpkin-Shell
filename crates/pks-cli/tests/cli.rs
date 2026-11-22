@@ -55,3 +55,21 @@ fn kiro_is_a_one_word_shortcut_that_takes_a_path() {
     // The program is pumpkin-shell.exe on Windows, so check the part that is the same.
     assert!(stdout.contains("kiro [PATH]"), "{stdout}");
 }
+
+#[test]
+fn kiro_without_a_folder_and_without_zenity_names_the_command_to_run() {
+    // With no zenity on PATH, no window can open. The command must say what to type.
+    let out = Command::new(env!("CARGO_BIN_EXE_pumpkin-shell"))
+        .arg("kiro")
+        .env("PATH", "/nonexistent")
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("pumpkin-shell kiro /yourfolderhere"),
+        "{stderr}"
+    );
+}

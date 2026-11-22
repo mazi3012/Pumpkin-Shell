@@ -10,6 +10,7 @@ mod dashboard;
 mod doctor;
 mod ide;
 mod log;
+mod picker;
 mod policy;
 mod restore;
 mod review;
@@ -67,19 +68,19 @@ enum Command {
         port: u16,
     },
     /// Open a repository in Kiro inside the sandbox. Same as 'ide kiro'.
+    #[command(after_help = "Example: pumpkin-shell kiro /yourfolderhere\n\
+Leave out the folder to choose it in a window (needs zenity).")]
     Kiro {
-        /// Repository to open.
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        /// Repository to open. Leave out to choose it in a window.
+        path: Option<PathBuf>,
     },
     /// Open a repository in an IDE that runs inside the sandbox.
     Ide {
         /// The IDE to start.
         #[arg(value_enum)]
         ide: ide::Ide,
-        /// Repository to open.
-        #[arg(default_value = ".")]
-        path: PathBuf,
+        /// Repository to open. Leave out to choose it in a window.
+        path: Option<PathBuf>,
     },
     /// Internal: the step inside the sandbox that applies Landlock and seccomp, then runs the IDE.
     #[command(hide = true)]
@@ -266,8 +267,8 @@ fn main() -> ExitCode {
             fail_on,
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
-        Some(Command::Ide { ide, path }) => ide::run(ide, &path),
-        Some(Command::Kiro { path }) => ide::run(ide::Ide::Kiro, &path),
+        Some(Command::Ide { ide, path }) => open_project(ide, path),
+        Some(Command::Kiro { path }) => open_project(ide::Ide::Kiro, path),
         Some(Command::Dashboard { port }) => dashboard::run(port),
         Some(Command::SandboxInit {
             rw,
@@ -318,6 +319,26 @@ fn main() -> ExitCode {
                 },
         }) => log::verify(&file, allow_open, key_dir.as_deref()),
         None => ExitCode::SUCCESS,
+    }
+}
+
+/// Opens the project in an IDE. Without a folder, a window asks for one. The
+/// command to type next time is printed first.
+fn open_project(ide: ide::Ide, path: Option<PathBuf>) -> ExitCode {
+    if let Some(path) = path {
+        return ide::run(ide, &path);
+    }
+    let usage = match ide {
+        ide::Ide::Kiro => "pumpkin-shell kiro /yourfolderhere",
+        ide::Ide::Code => "pumpkin-shell ide code /yourfolderhere",
+    };
+    eprintln!("Opening a folder window. To skip it next time, run:\n  {usage}");
+    match picker::choose_folder(usage) {
+        Ok(path) => ide::run(ide, &path),
+        Err(message) => {
+            eprintln!("{message}");
+            ExitCode::from(2)
+        }
     }
 }
 
