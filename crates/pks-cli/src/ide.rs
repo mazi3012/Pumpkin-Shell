@@ -83,7 +83,15 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         Ok(found) => found.unwrap_or_else(pks_core::policy::empty_user_policy),
         Err(error) => return setup(format!("your policy is not valid: {error}")),
     };
-    let effective = pks_core::policy::Effective::from_user(&policy);
+    let mut effective = pks_core::policy::Effective::from_user(&policy);
+    if matches!(ide, Ide::Kiro) {
+        // Kiro's own endpoints are allowed by default, so sign-in works without a
+        // policy file. The user's policy can still add or tighten other hosts.
+        match pks_core::profile::kiro_allow() {
+            Ok(hosts) => effective.allow.extend(hosts),
+            Err(error) => return setup(format!("the built-in Kiro profile is broken: {error}")),
+        }
+    }
     let mut session = match Session::start(&data, &effective, repo) {
         Ok(session) => session,
         Err(message) => return setup(message),

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.2 - 2026-11-23
+
+### Added
+- Built-in Kiro profile (`profiles/kiro.toml`): the eight exact endpoints a Kiro
+  installation needs are allowed by default. Kiro sign-in works with no policy
+  file. Your own policy can still add or tighten hosts.
+
 ## 1.0.1 - 2026-11-23
 
 ### Added

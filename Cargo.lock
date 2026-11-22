@@ -715,7 +715,7 @@ checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
 
 [[package]]
 name = "pks-cli"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "clap",
  "landlock",
@@ -733,7 +733,7 @@ dependencies = [
 
 [[package]]
 name = "pks-core"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "ed25519-dalek",
  "getrandom 0.4.3",
@@ -747,7 +747,7 @@ dependencies = [
 
 [[package]]
 name = "pks-detect"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "pks-core",
  "serde",
@@ -757,7 +757,7 @@ dependencies = [
 
 [[package]]
 name = "pks-proxy"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "pks-core",
  "thiserror",
@@ -765,7 +765,7 @@ dependencies = [
 
 [[package]]
 name = "pks-registry"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "aws-lc-rs",
  "http",
@@ -787,7 +787,7 @@ dependencies = [
 
 [[package]]
 name = "pks-sandbox"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "getrandom 0.4.3",
  "landlock",
@@ -799,7 +799,7 @@ dependencies = [
 
 [[package]]
 name = "pks-scan"
-version = "1.0.1"
+version = "1.0.2"
 dependencies = [
  "ignore",
  "jsonc-parser",
