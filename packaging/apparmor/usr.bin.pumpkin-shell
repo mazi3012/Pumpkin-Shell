@@ -1,0 +1,25 @@
+# AppArmor profile for pumpkin-shell (Ubuntu 24.04 and later).
+#
+# On Ubuntu 24.04, kernel.apparmor_restrict_unprivileged_userns is 1 by default.
+# Then a program that creates a user namespace needs an AppArmor profile that
+# allows it. bubblewrap, which pumpkin-shell runs to build the sandbox, needs
+# that permission. This profile grants only "userns" to pumpkin-shell. It does
+# not confine the program.
+#
+# Install (needs root, and only if `pumpkin-shell doctor` reports the user
+# namespace check as FAIL):
+#   sudo install -m 0644 usr.bin.pumpkin-shell /etc/apparmor.d/usr.bin.pumpkin-shell
+#   sudo apparmor_parser -r /etc/apparmor.d/usr.bin.pumpkin-shell
+# Remove it again with:
+#   sudo rm /etc/apparmor.d/usr.bin.pumpkin-shell
+#   sudo apparmor_parser -R /etc/apparmor.d/usr.bin.pumpkin-shell
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile pumpkin-shell /usr/bin/pumpkin-shell flags=(unconfined) {
+  userns,
+
+  # Site-specific additions and overrides. See local/README for details.
+  include if exists <local/usr.bin.pumpkin-shell>
+}

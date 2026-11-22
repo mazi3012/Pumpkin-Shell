@@ -27,6 +27,10 @@ mkdir -p "$root/DEBIAN" "$root/usr/bin" "$root/usr/share/doc/pumpkin-shell"
 install -m 0755 "$binary" "$root/usr/bin/pumpkin-shell"
 install -m 0644 LICENSE "$root/usr/share/doc/pumpkin-shell/copyright"
 install -m 0644 docs/ESCAPE-CORPUS.md "$root/usr/share/doc/pumpkin-shell/ESCAPE-CORPUS.md"
+install -m 0644 docs/THREAT-MODEL.md "$root/usr/share/doc/pumpkin-shell/THREAT-MODEL.md"
+# The AppArmor profile is shipped but not loaded. Loading needs root (README).
+mkdir -p "$root/usr/share/pumpkin-shell/apparmor"
+install -m 0644 packaging/apparmor/usr.bin.pumpkin-shell "$root/usr/share/pumpkin-shell/apparmor/usr.bin.pumpkin-shell"
 
 installed_kb=$(du -sk "$root/usr" | cut -f1)
 cat > "$root/DEBIAN/control" <<CONTROL

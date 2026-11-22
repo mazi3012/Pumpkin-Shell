@@ -101,7 +101,36 @@ XWayland is running. This has not been tested yet.
 
    Every line says PASS, WARN or FAIL. A FAIL line includes the fix to run.
 
-### Option 2: build from source
+### Option 2: install the RPM (Fedora 45 and later)
+
+1. Download `pumpkin-shell-1.0.0-1.*.x86_64.rpm` from the
+   [Releases page](https://github.com/mazi3012/pumpkin-shell/releases) and
+   check its signature (see [Verify the download](#verify-the-download)).
+2. Install it. `dnf` also installs the dependencies:
+
+   ```sh
+   sudo dnf install ./pumpkin-shell-1.0.0-1.*.x86_64.rpm
+   pumpkin-shell doctor
+   ```
+
+### Ubuntu 24.04: if `doctor` says user namespaces are restricted
+
+Ubuntu 24.04 blocks unprivileged user namespaces by default, so the sandbox
+cannot start. The package ships an AppArmor profile that allows only this
+permission. It is not installed automatically. Install it with root rights:
+
+```sh
+sudo install -m 0644 /usr/share/pumpkin-shell/apparmor/usr.bin.pumpkin-shell /etc/apparmor.d/usr.bin.pumpkin-shell
+sudo apparmor_parser -r /etc/apparmor.d/usr.bin.pumpkin-shell
+pumpkin-shell doctor
+```
+
+To remove it, run `sudo apparmor_parser -R /etc/apparmor.d/usr.bin.pumpkin-shell`
+and delete the file. The profile does not confine the program. It only grants
+the `userns` permission. The profile has been checked for syntax; it has not
+yet been tested on a restricted Ubuntu 24.04 host.
+
+### Option 3: build from source
 
 The Rust version is pinned in `rust-toolchain.toml`. Install
 [rustup](https://rustup.rs/) first, then:
@@ -129,7 +158,9 @@ cosign verify-blob \
 ```
 
 Each release also has SLSA provenance, which says which workflow built the
-package.
+package. The security model, its known risks and the measured escape corpus are
+in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and
+[docs/ESCAPE-CORPUS.md](docs/ESCAPE-CORPUS.md).
 
 ---
 
