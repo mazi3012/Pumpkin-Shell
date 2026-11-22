@@ -702,11 +702,17 @@ fn handle_monitor_event(
             interactive,
             ..
         } => pks_detect::monitor::exec_findings(&path, &argv, interactive),
-        Event::Connect { target, .. } => {
+        Event::Connect { pid, target } => {
             if !seen.insert(target.to_string()) {
                 return;
             }
-            pks_detect::monitor::connect_finding(target, &context.allowed_ports)
+            // A loopback port the sandbox itself listens on belongs to the IDE
+            // (for example its agent endpoint), so a connection to it is expected.
+            let mut allowed = context.allowed_ports.clone();
+            if target.ip().is_loopback() {
+                allowed.extend(pks_sandbox::linux::notify::listening_ports(pid));
+            }
+            pks_detect::monitor::connect_finding(target, &allowed)
                 .into_iter()
                 .collect()
         }
