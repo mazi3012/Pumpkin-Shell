@@ -82,7 +82,24 @@ Optional, for nicer alerts: `zenity` (popups), `xclip` (clipboard) and
 The sandbox displays the IDE through X11. A Wayland desktop works only if
 XWayland is running. This has not been tested yet.
 
-### Option 1: install the Debian package (Ubuntu 24.04+, Debian 13+)
+### Quick install (Ubuntu, Debian, Linux Mint)
+
+You need [cosign](https://github.com/sigstore/cosign/releases) to check the
+download. Then run:
+
+```sh
+git clone https://github.com/mazi3012/Pumpkin-Shell.git
+cd Pumpkin-Shell
+packaging/install.sh 1.0.0
+pumpkin-shell doctor
+```
+
+The script downloads the package and its signature, checks the signature, and
+only then installs it with `apt` (it asks for your password). If the check
+fails, nothing is installed. To check the download without installing, add
+`--check-only`. Read the script first if you want to: it is short.
+
+### Option 1: install the Debian package by hand (Ubuntu 24.04+, Debian 13+)
 
 1. Download `pumpkin-shell_1.0.0_amd64.deb` from the
    [Releases page](https://github.com/mazi3012/pumpkin-shell/releases).
@@ -169,8 +186,11 @@ in [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) and
 Open a project in the sandboxed Kiro:
 
 ```sh
-pumpkin-shell ide kiro ~/my-project
+pumpkin-shell kiro ~/my-project
 ```
+
+(`pumpkin-shell ide kiro ~/my-project` does the same.) VS Code, Cursor and
+Windsurf are after the first release.
 
 A window opens with Kiro. Watch the terminal you started it from: it prints
 alerts, and it asks you when a site is not on the allowlist.
@@ -179,7 +199,8 @@ alerts, and it asks you when a site is not on the allowlist.
 |---|---|
 | `pumpkin-shell doctor` | Checks that this machine can run the sandbox. |
 | `pumpkin-shell scan [PATH]` | Scans a repo for setups that let an agent escape its folder. Use `--ci` in a pipeline. |
-| `pumpkin-shell ide kiro [PATH]` | Opens the project in Kiro inside the sandbox. |
+| `pumpkin-shell kiro [PATH]` | Opens the project in Kiro inside the sandbox. Same as `ide kiro`. |
+| `pumpkin-shell ide kiro [PATH]` | The same, with the IDE name spelled out. |
 | `pumpkin-shell watch` | Shows findings from running sessions (WARN and above). |
 | `pumpkin-shell review SESSION` | Lists staged changes, then approve or reject each one. |
 | `pumpkin-shell allow-write SESSION PATH` | Approves one staged change. |

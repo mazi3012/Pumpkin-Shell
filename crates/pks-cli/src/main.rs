@@ -59,6 +59,12 @@ enum Command {
         #[arg(long)]
         no_ignore: bool,
     },
+    /// Open a repository in Kiro inside the sandbox. Same as 'ide kiro'.
+    Kiro {
+        /// Repository to open.
+        #[arg(default_value = ".")]
+        path: PathBuf,
+    },
     /// Open a repository in an IDE that runs inside the sandbox.
     Ide {
         /// The IDE to start.
@@ -254,6 +260,7 @@ fn main() -> ExitCode {
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
         Some(Command::Ide { ide, path }) => ide::run(ide, &path),
+        Some(Command::Kiro { path }) => ide::run(ide::Ide::Kiro, &path),
         Some(Command::SandboxInit {
             rw,
             ro,
