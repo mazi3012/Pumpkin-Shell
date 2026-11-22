@@ -1642,3 +1642,56 @@ fn corpus_control_the_harness_reports_success_and_failure() -> TestResult {
     assert_ne!(attempt("false")?, 0);
     Ok(())
 }
+
+/// A connect target port with the listening ports of the connecting process.
+type Samples = Vec<(u16, Vec<u16>)>;
+
+/// The IDE's own loopback services are not reported. The listeners of the
+/// connecting process are read while its connect is pending, which is when
+/// the monitor reads them. A connection to a port the sandbox listens on is
+/// then allowed; a connection to a port nothing listens on is still reported.
+#[test]
+fn a_connection_to_the_sandboxs_own_listener_is_expected_and_others_are_not() -> TestResult {
+    use pks_sandbox::linux::notify::{Event, listening_ports, serve_monitor};
+    use std::sync::Mutex;
+    let layout = Layout::new()?;
+    let dir = tempfile::tempdir()?;
+    let socket = dir.path().join("supervisor.sock");
+    let listener = UnixListener::bind(&socket)?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&stop);
+    // (target port, listening ports of the connecting process), read at event time.
+    let seen: Arc<Mutex<Samples>> = Arc::default();
+    let sink = Arc::clone(&seen);
+    let monitor = std::thread::spawn(move || {
+        serve_monitor(
+            &listener,
+            &flag,
+            |event| {
+                if let Event::Connect { pid, target } = event
+                    && let Ok(mut list) = sink.lock()
+                {
+                    list.push((target.port(), listening_ports(pid)));
+                }
+            },
+            |reason| panic!("monitor lost: {reason}"),
+        );
+    });
+    let script = "python3 -c 'import socket,time\ns=socket.socket()\ns.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)\ns.bind((\"127.0.0.1\",9100))\ns.listen()\ntime.sleep(20)' &\nsleep 2\ncurl -s -m 3 http://127.0.0.1:9100/ > /dev/null 2>&1\ncurl -s -m 3 http://127.0.0.1:5432/ > /dev/null 2>&1\necho finished > /workspace/finished.txt\nexit 0\n";
+    let mut spec = layout.spec_running(script);
+    spec.supervisor_socket = Some(socket.clone());
+    let status = backend()?.run(&spec);
+    stop.store(true, Ordering::Relaxed);
+    let _ = std::os::unix::net::UnixStream::connect(&socket);
+    monitor.join().map_err(|_| "the monitor thread panicked")?;
+    let status = status?;
+    assert!(status.success(), "{status}");
+    let seen = seen.lock().map(|list| list.clone()).unwrap_or_default();
+    let own = seen.iter().find(|(port, _)| *port == 9100);
+    let (_, listeners) = own.unwrap_or_else(|| panic!("no connect to 9100 in {seen:?}"));
+    assert!(listeners.contains(&9100), "{listeners:?}");
+    let unlisted = seen.iter().find(|(port, _)| *port == 5432);
+    let (_, listeners) = unlisted.unwrap_or_else(|| panic!("no connect to 5432 in {seen:?}"));
+    assert!(!listeners.contains(&5432), "{listeners:?}");
+    Ok(())
+}

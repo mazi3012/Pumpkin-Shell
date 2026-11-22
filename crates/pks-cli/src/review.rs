@@ -200,6 +200,17 @@ pub fn run(session: &str) -> ExitCode {
     let Some(info) = find_session(session) else {
         return ExitCode::from(EXIT_NOT_FOUND);
     };
+    // While the session runs, its repo holds empty placeholders where protected
+    // files are mounted. They would look like conflicting repo edits, so the
+    // review waits for the session to end.
+    if let Some(pid) = pks_detect::read_pid(&info.dir)
+        && Path::new(&format!("/proc/{pid}")).exists()
+    {
+        eprintln!(
+            "review: session {session} is still running. Stop it with 'pumpkin-shell kill {session}' and review again."
+        );
+        return ExitCode::from(EXIT_NOT_FOUND);
+    }
     let review = match gather(&info) {
         Ok(review) => review,
         Err(message) => {
