@@ -626,6 +626,7 @@ fn now_ms() -> u64 {
 #[cfg(target_os = "linux")]
 /// The socket in the session directory that receives the monitor's listener
 /// (Phase 15).
+#[cfg(target_os = "linux")]
 const SUPERVISOR_SOCKET: &str = "supervisor.sock";
 const STAGING_POLL: std::time::Duration = std::time::Duration::from_millis(500);
 
@@ -1061,6 +1062,7 @@ pub fn sandbox_init(
     _proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
     _mirror: Option<(std::net::SocketAddr, PathBuf)>,
     _callback: Option<(PathBuf, std::net::SocketAddr)>,
+    _supervisor: Option<PathBuf>,
     _command: &[std::ffi::OsString],
 ) -> ExitCode {
     eprintln!("sandbox-init: Linux only");
