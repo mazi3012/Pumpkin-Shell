@@ -10,10 +10,15 @@
 - `pumpkin-shell kiro [PATH]`: same as `pumpkin-shell ide kiro [PATH]`.
 - `packaging/install.sh`: downloads a release package, checks its cosign
   signature, and installs it only when the check passes.
+- Each release also has a stable file name, `pumpkin-shell_amd64.deb`, with its
+  own signature bundle, so the README link never needs a version number.
+- The Debian package loads the AppArmor profile on Ubuntu 24.04 when unprivileged
+  user namespaces are restricted, and removes it on uninstall.
 
 ### Changed
-- README install section: two copy-paste cells. Cell 1 installs Pumpkin-Shell and
-  its dependencies. Cell 2 launches Kiro. The other install options are removed.
+- README install: two steps. Download the `.deb` and install it with `apt`, then
+  open a project in Kiro. Build from source moved to Advanced. The other install
+  options are removed.
 - The `kiro` help check no longer depends on the program name, which Windows
   prints as `pumpkin-shell.exe`.
 
@@ -35,5 +40,5 @@ First release. Linux, with Kiro as the supported IDE.
 - Detection rules with severity levels, alerts, pause on CRITICAL, and review.
 - Signed, hash-chained session log with `log verify`.
 - `scan` for agent-escape setups, `doctor`, `policy check`, `trust`.
-- Escape corpus v1: 32 of 32 attacks blocked on Linux.
+- Escape corpus v1: 32 of 32 attacks pass on Linux.
 - Not in 1.0.0: Windows, VS Code, Cursor, Windsurf.

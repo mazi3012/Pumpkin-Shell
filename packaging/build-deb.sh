@@ -50,6 +50,9 @@ Description: sandbox for AI-powered IDEs (Kiro first)
  protected files, a guarded package mirror, and signed session logs.
 CONTROL
 
+# Maintainer scripts: load the AppArmor profile on Ubuntu 24.04 when needed, and remove it.
+install -m 0755 packaging/debian/postinst "$root/DEBIAN/postinst"
+install -m 0755 packaging/debian/postrm "$root/DEBIAN/postrm"
 mkdir -p dist
 out="dist/pumpkin-shell_${version}_amd64.deb"
 dpkg-deb --root-owner-group --build "$root" "$out" >/dev/null

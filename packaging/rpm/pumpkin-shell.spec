@@ -42,6 +42,6 @@ install -Dm0644 packaging/apparmor/usr.bin.pumpkin-shell %{buildroot}%{_datadir}
 * Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.1-1
 - Add pumpkin-shell dashboard (Pumpkin-Shell Watch), a read-only local page.
 - Add pumpkin-shell kiro [PATH] shortcut.
-- Rewrite the README install steps as two copy-paste cells.
+- Simplify the README install to two steps.
 * Sun Nov 22 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.0-1
 - First release: Linux, Kiro first.

@@ -6,8 +6,8 @@
 # that permission. This profile grants only "userns" to pumpkin-shell. It does
 # not confine the program.
 #
-# Install (needs root, and only if `pumpkin-shell doctor` reports the user
-# namespace check as FAIL):
+# The Debian package loads this profile on Ubuntu 24.04 when the system restricts
+# user namespaces, and removes it on uninstall. Other installs need root:
 #   sudo install -m 0644 usr.bin.pumpkin-shell /etc/apparmor.d/usr.bin.pumpkin-shell
 #   sudo apparmor_parser -r /etc/apparmor.d/usr.bin.pumpkin-shell
 # Remove it again with:

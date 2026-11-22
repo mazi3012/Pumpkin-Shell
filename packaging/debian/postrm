@@ -1,0 +1,19 @@
+#!/bin/sh
+# Runs as root when the package is removed or purged. Unloads and deletes the
+# AppArmor profile that postinst installed.
+set -e
+
+TARGET=/etc/apparmor.d/usr.bin.pumpkin-shell
+
+case "$1" in
+    remove|purge)
+        if [ -f "$TARGET" ]; then
+            if command -v apparmor_parser >/dev/null 2>&1; then
+                apparmor_parser -R "$TARGET" 2>/dev/null || true
+            fi
+            rm -f "$TARGET"
+        fi
+        ;;
+esac
+
+exit 0

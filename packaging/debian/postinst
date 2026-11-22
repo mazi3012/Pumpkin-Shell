@@ -1,0 +1,23 @@
+#!/bin/sh
+# Runs as root after the package is unpacked. On Ubuntu 24.04 the kernel may
+# block unprivileged user namespaces, which bubblewrap needs. Then this loads
+# the pumpkin-shell AppArmor profile. On other systems it does nothing.
+set -e
+
+PROFILE=/usr/share/pumpkin-shell/apparmor/usr.bin.pumpkin-shell
+TARGET=/etc/apparmor.d/usr.bin.pumpkin-shell
+RESTRICT=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+
+case "$1" in
+    configure)
+        if [ -r "$RESTRICT" ] && [ "$(cat "$RESTRICT")" = "1" ] \
+            && command -v apparmor_parser >/dev/null 2>&1; then
+            install -m 0644 "$PROFILE" "$TARGET"
+            if ! apparmor_parser -r "$TARGET"; then
+                echo "pumpkin-shell: could not load the AppArmor profile. Run: pumpkin-shell doctor" >&2
+            fi
+        fi
+        ;;
+esac
+
+exit 0
