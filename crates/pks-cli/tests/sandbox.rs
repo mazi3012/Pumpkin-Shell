@@ -1071,8 +1071,12 @@ fn npm_installs_a_real_package_through_the_mirror_and_direct_access_is_refused()
         pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
     });
 
-    let script = "cd /workspace || exit 2\nnpm config get registry > /workspace/registry.txt || exit 3\nnpm install left-pad@1.3.0 --no-audit --no-fund > /workspace/npm.log 2>&1 || exit 4\ntest -f /workspace/node_modules/left-pad/package.json || exit 5\ncurl -s -m 15 https://registry.npmjs.org/left-pad > /dev/null 2>&1; echo $? > /workspace/direct.txt\nexit 0\n";
-    let mut spec = layout.spec_running(script);
+    let script = format!(
+        "{}{}",
+        host_tool_path(&["npm", "node"])?,
+        "cd /workspace || exit 2\nnpm config get registry > /workspace/registry.txt || exit 3\nnpm install left-pad@1.3.0 --no-audit --no-fund > /workspace/npm.log 2>&1 || exit 4\ntest -f /workspace/node_modules/left-pad/package.json || exit 5\ncurl -s -m 15 https://registry.npmjs.org/left-pad > /dev/null 2>&1; echo $? > /workspace/direct.txt\nexit 0\n"
+    );
+    let mut spec = layout.spec_running(&script);
     spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
     let status = backend()?.run(&spec);
     stop.store(true, Ordering::Relaxed);
@@ -1123,12 +1127,44 @@ fn pip_installs_a_real_package_through_the_mirror() -> TestResult {
     Ok(())
 }
 
+/// The sandbox's PATH is `/usr/bin:/bin`. On some hosts (GitHub's Ubuntu
+/// runners, for example) `npm` and `node` live in `/usr/local/bin`, which the
+/// sandbox does see (it binds `/usr` read-only) but does not search. This
+/// returns a script line that adds the directories of `tools` to the front of
+/// PATH. It is empty when `tools` is empty.
+fn host_tool_path(tools: &[&str]) -> Result<String, Box<dyn std::error::Error>> {
+    if tools.is_empty() {
+        return Ok(String::new());
+    }
+    let search = std::env::var_os("PATH").unwrap_or_default();
+    let mut dirs: Vec<String> = Vec::new();
+    for tool in tools {
+        let dir = std::env::split_paths(&search)
+            .find(|dir| dir.join(tool).is_file())
+            .ok_or_else(|| format!("{tool} is not installed on the host"))?;
+        let dir = dir
+            .to_str()
+            .ok_or("a tool directory is not UTF-8")?
+            .to_owned();
+        if dir.contains(['"', '$', '`', '\\']) {
+            return Err(format!("{dir} has a character the script cannot quote").into());
+        }
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
+    Ok(format!("export PATH=\"{}:$PATH\"\n", dirs.join(":")))
+}
+
 /// Runs `script` in the sandbox with the package mirror on, and stops the
-/// mirror afterwards. Needs internet access to the registries.
+/// mirror afterwards. `tools` are host programs the script needs on PATH.
+/// Needs internet access to the registries.
 fn run_through_mirror(
     layout: &Layout,
+    tools: &[&str],
     script: &str,
 ) -> Result<std::process::ExitStatus, Box<dyn std::error::Error>> {
+    let script = format!("{}{script}", host_tool_path(tools)?);
     let mirror_dir = tempfile::tempdir()?;
     let listener = UnixListener::bind(mirror_dir.path().join("mirror.sock"))?;
     let upstream = Arc::new(pks_registry::upstream::Upstream::new().map_err(|e| e.to_string())?);
@@ -1144,7 +1180,7 @@ fn run_through_mirror(
     let server = std::thread::spawn(move || {
         pks_registry::server::serve(listener, mirror, Arc::new(|_: &str| {}), flag)
     });
-    let mut spec = layout.spec_running(script);
+    let mut spec = layout.spec_running(&script);
     spec.mirror_socket = Some(mirror_dir.path().join("mirror.sock"));
     let status = backend()?.run(&spec);
     stop.store(true, Ordering::Relaxed);
@@ -1178,7 +1214,7 @@ echo '{"name":"app","version":"1.0.0"}' > package.json
 test -f node_modules/left-pad/package.json || exit 8
 exit 0
 "#;
-    let status = run_through_mirror(&layout, script)?;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
     assert_client_ok(&layout, status)?;
     assert_eq!(
         fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
@@ -1207,7 +1243,7 @@ echo '{"name":"app","version":"1.0.0"}' > package.json
 test -f node_modules/left-pad/package.json || exit 7
 exit 0
 "#;
-    let status = run_through_mirror(&layout, script)?;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
     assert_client_ok(&layout, status)?;
     assert_eq!(
         fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
@@ -1235,7 +1271,7 @@ $BUN add left-pad@1.3.0 >> /workspace/client.log 2>&1 || exit 6
 test -f node_modules/left-pad/package.json || exit 7
 exit 0
 "#;
-    let status = run_through_mirror(&layout, script)?;
+    let status = run_through_mirror(&layout, &["npm", "node"], script)?;
     assert_client_ok(&layout, status)?;
     assert_eq!(
         fs::read_to_string(layout.repo.join("version.txt"))?.trim(),
@@ -1261,7 +1297,7 @@ printf '[project]\nname = "app"\nversion = "0.1.0"\nrequires-python = ">=3.10"\n
 grep -q 'version = "2.34.2"' poetry.lock || exit 8
 exit 0
 "#;
-    let status = run_through_mirror(&layout, script)?;
+    let status = run_through_mirror(&layout, &[], script)?;
     assert_client_ok(&layout, status)?;
     let version = fs::read_to_string(layout.repo.join("version.txt"))?;
     assert!(version.contains("2.5.1"), "{version}");
@@ -1281,10 +1317,10 @@ mkdir -p /home/sandbox/tools && python3 -m venv /home/sandbox/tools/uv-venv || e
 mkdir -p /workspace/app && cd /workspace/app || exit 5
 /home/sandbox/tools/uv-venv/bin/uv venv .venv >> /workspace/client.log 2>&1 || exit 6
 /home/sandbox/tools/uv-venv/bin/uv pip install --python .venv/bin/python requests==2.34.2 >> /workspace/client.log 2>&1 || exit 7
-test -d .venv/lib/python3.12/site-packages/requests || exit 8
+ls -d .venv/lib/python3*/site-packages/requests > /dev/null 2>&1 || exit 8
 exit 0
 "#;
-    let status = run_through_mirror(&layout, script)?;
+    let status = run_through_mirror(&layout, &[], script)?;
     assert_client_ok(&layout, status)?;
     let version = fs::read_to_string(layout.repo.join("version.txt"))?;
     assert!(version.starts_with("uv 0.13.9"), "{version}");
