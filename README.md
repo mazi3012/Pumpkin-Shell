@@ -8,7 +8,7 @@ AI in the IDE can read and change the project, but it cannot reach your SSH
 keys, cloud logins, host files outside the project, or the internet except
 through a checked proxy.
 
-Version 1.0.2 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
+Version 1.0.3 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
 Windsurf come after the first release.
 
 License: MIT (see [LICENSE](LICENSE)).
@@ -87,8 +87,20 @@ mkdir -p ~/my-project && git -C ~/my-project init -q && pumpkin-shell kiro ~/my-
 ```
 
 Kiro opens in the sandbox. Use your own project folder in place of
-`~/my-project`. Kiro's own sign-in and service hosts are allowed by default, so
-no policy file is needed. Other sites ask you first.
+`~/my-project`:
+
+```sh
+pumpkin-shell kiro /yourfolderhere
+```
+
+Pumpkin-Shell opens only the folder you give. Inside Kiro, the Open Folder
+dialog cannot browse to other folders, so to work on another project, quit Kiro
+and run the command again with that folder. To pick the folder in a window
+instead, run `pumpkin-shell kiro` with no folder (this needs zenity, which the
+package installs).
+
+Kiro's own sign-in and service hosts are allowed by default, so no policy file
+is needed. Other sites ask you first.
 
 If something fails, run `pumpkin-shell doctor`. Each FAIL line prints the fix.
 
@@ -183,10 +195,10 @@ The release notes and the escape corpus are in
 Open a project in the sandboxed Kiro:
 
 ```sh
-pumpkin-shell kiro ~/my-project
+pumpkin-shell kiro /yourfolderhere
 ```
 
-(`pumpkin-shell ide kiro ~/my-project` does the same.) VS Code, Cursor and
+Without a folder, a window asks for one. (`pumpkin-shell ide kiro /yourfolderhere` does the same.) VS Code, Cursor and
 Windsurf are after the first release.
 
 A window opens with Kiro. Watch the terminal you started it from: it prints
@@ -196,8 +208,8 @@ alerts, and it asks you when a site is not on the allowlist.
 |---|---|
 | `pumpkin-shell doctor` | Checks that this machine can run the sandbox. |
 | `pumpkin-shell scan [PATH]` | Scans a repo for setups that let an agent escape its folder. Use `--ci` in a pipeline. |
-| `pumpkin-shell kiro [PATH]` | Opens the project in Kiro inside the sandbox. Same as `ide kiro`. |
-| `pumpkin-shell ide kiro [PATH]` | The same, with the IDE name spelled out. |
+| `pumpkin-shell kiro [PATH]` | Opens the project folder in Kiro inside the sandbox. Without a folder, a window asks for one. Same as `ide kiro`. |
+| `pumpkin-shell ide kiro [PATH]` | The same, with the IDE name spelled out. Without a folder, a window asks for one. |
 | `pumpkin-shell watch` | Shows findings from running sessions (WARN and above). |
 | `pumpkin-shell review SESSION` | Lists staged changes, then approve or reject each one. |
 | `pumpkin-shell allow-write SESSION PATH` | Approves one staged change. |
@@ -217,6 +229,12 @@ Where things live:
 ---
 
 ## Live dashboard
+
+`pumpkin-shell kiro` and `pumpkin-shell ide` start the dashboard on
+http://127.0.0.1:8765/ while the IDE is open. The start banner shows the link.
+Use `--no-dashboard` to skip it.
+
+To open the dashboard without an IDE:
 
 ```sh
 pumpkin-shell dashboard          # then open http://127.0.0.1:8765/
@@ -331,7 +349,7 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.2) |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.3) |
 | 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 

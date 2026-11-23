@@ -64,6 +64,28 @@ pub fn run(port: u16) -> ExitCode {
     }
 }
 
+/// Starts the dashboard on a background thread and returns the port it
+/// listens on. It runs until the process exits. Used by `kiro` and `ide`, so
+/// the page is up while the IDE is open.
+///
+/// # Errors
+/// Fails when the data directory is unknown or the port is in use.
+pub fn start_in_background(port: u16) -> Result<u16, String> {
+    let Some(data) = pks_core::paths::data_dir(&pks_core::paths::process_env) else {
+        return Err("cannot find your data directory (is HOME set?)".to_owned());
+    };
+    let address = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
+    let listener = TcpListener::bind(address)
+        .map_err(|error| format!("cannot listen on {address}: {error}"))?;
+    let port = listener.local_addr().map_or(port, |a| a.port());
+    let state = Arc::new(Mutex::new(Checker::new(data)));
+    let stop = Arc::new(AtomicBool::new(false));
+    std::thread::spawn(move || {
+        let _ = serve(listener, state, port, stop);
+    });
+    Ok(port)
+}
+
 /// Answers requests until `stop` is set. Each connection gets its own thread,
 /// so one slow client does not hold up the page.
 ///

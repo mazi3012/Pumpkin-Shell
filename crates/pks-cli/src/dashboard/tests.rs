@@ -331,3 +331,13 @@ fn a_session_that_is_not_running_is_shown_as_ended() -> TestResult {
     assert_eq!(snap.totals.running, 0);
     Ok(())
 }
+
+#[test]
+fn the_background_start_serves_the_page_on_the_port_it_returns() -> TestResult {
+    let port = super::start_in_background(0)?;
+    assert_ne!(port, 0, "the port is the one the OS gave");
+    let (status, _, body) = request(port, "GET", "/", &format!("127.0.0.1:{port}"))?;
+    assert_eq!(status, "HTTP/1.1 200 OK");
+    assert!(String::from_utf8(body)?.contains("Pumpkin-Shell"));
+    Ok(())
+}
