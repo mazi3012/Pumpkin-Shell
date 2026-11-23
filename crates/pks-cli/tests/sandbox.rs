@@ -192,6 +192,7 @@ impl Layout {
             binds: Vec::new(),
             pid_file: None,
             broker_dir: None,
+            publish: false,
             display_file: None,
             mirror_socket: None,
             supervisor_socket: None,
@@ -1693,5 +1694,69 @@ fn a_connection_to_the_sandboxs_own_listener_is_expected_and_others_are_not() ->
     let unlisted = seen.iter().find(|(port, _)| *port == 5432);
     let (_, listeners) = unlisted.unwrap_or_else(|| panic!("no connect to 5432 in {seen:?}"));
     assert!(!listeners.contains(&5432), "{listeners:?}");
+    Ok(())
+}
+
+#[test]
+fn a_published_port_reaches_a_server_inside_the_sandbox() -> TestResult {
+    // A server on the sandbox's own loopback, port 3000. It echoes one message per connection
+    // and runs until the test writes the stop file in the repo.
+    let script = r#"python3 -c '
+import socket
+s = socket.socket()
+s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind(("127.0.0.1", 3000))
+s.listen(5)
+while True:
+    c, _ = s.accept()
+    c.sendall(c.recv(64))
+    c.close()
+' &
+while [ ! -e /workspace/stop ]; do sleep 0.2; done
+"#;
+    let layout = Layout::new()?;
+    let broker = tempfile::tempdir()?;
+    let mut spec = layout.spec_running(script);
+    spec.broker_dir = Some(broker.path().to_path_buf());
+    spec.publish = true;
+
+    // The host side: the same relay the launcher starts for `--publish 3000`.
+    let host = std::net::TcpListener::bind("127.0.0.1:0")?;
+    let host_port = host.local_addr()?.port();
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&stop);
+    let agent = broker.path().join("publish.sock");
+    std::thread::spawn(move || {
+        let _ = pks_sandbox::linux::broker::publish_host(host, agent, 3000, flag);
+    });
+
+    let sandbox = backend()?;
+    let run = std::thread::spawn(move || sandbox.run(&spec));
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut echoed = None;
+    while std::time::Instant::now() < deadline {
+        if let Ok(mut browser) =
+            std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, host_port))
+        {
+            browser.set_read_timeout(Some(std::time::Duration::from_secs(3)))?;
+            let _ = std::io::Write::write_all(&mut browser, b"ping");
+            let mut reply = [0u8; 4];
+            if std::io::Read::read_exact(&mut browser, &mut reply).is_ok() {
+                echoed = Some(reply);
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
+    std::fs::write(layout.repo.join("stop"), b"")?;
+    stop.store(true, std::sync::atomic::Ordering::Relaxed);
+    let status = run.join().map_err(|_| "the sandbox thread panicked")??;
+    assert_eq!(
+        echoed,
+        Some(*b"ping"),
+        "the published port did not reach the server"
+    );
+    assert!(status.success(), "the sandbox exited with {status}");
     Ok(())
 }

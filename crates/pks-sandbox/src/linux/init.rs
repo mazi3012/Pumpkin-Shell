@@ -140,6 +140,7 @@ pub fn run(
     command: &[OsString],
     relays: &[Relay],
     callback: Option<&Callback>,
+    publish: Option<&Path>,
     supervisor: Option<&Path>,
 ) -> SandboxError {
     if let Err(error) = restrict_filesystem(rw, ro) {
@@ -152,6 +153,11 @@ pub fn run(
     }
     if let Some(callback) = callback
         && let Err(error) = start_callback(callback)
+    {
+        return error;
+    }
+    if let Some(socket) = publish
+        && let Err(error) = start_publish(socket)
     {
         return error;
     }
@@ -211,6 +217,32 @@ fn start_callback(callback: &Callback) -> Result<(), SandboxError> {
     Err(setup("its socket did not appear within 5 seconds"))
 }
 
+/// Starts the publish agent (FR-PUB) before the IDE. It listens on `socket` in
+/// the broker directory and passes each connection to the port the host names.
+fn start_publish(socket: &Path) -> Result<(), SandboxError> {
+    let setup = |what: &str| SandboxError::Setup(format!("publish: {what}"));
+    let exe = std::env::current_exe().map_err(|e| SandboxError::Io {
+        context: "cannot find the in-sandbox binary".to_owned(),
+        source: e,
+    })?;
+    let _child = Command::new(exe)
+        .arg("sandbox-publish")
+        .arg("--socket")
+        .arg(socket)
+        .spawn()
+        .map_err(|e| SandboxError::Io {
+            context: "cannot start the publish agent".to_owned(),
+            source: e,
+        })?;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if socket.exists() {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    Err(setup("its socket did not appear within 5 seconds"))
+}
 /// A relay to start before the IDE: listen address and the proxy socket.
 #[derive(Debug, Clone)]
 pub struct Relay {

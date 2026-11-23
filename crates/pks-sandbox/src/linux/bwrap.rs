@@ -56,6 +56,8 @@ pub const BROKER_IN: &str = "/run/pks/broker";
 pub const BROKER_REQUEST_IN: &str = "/run/pks/broker/request.sock";
 /// The callback socket the in-sandbox agent creates.
 pub const BROKER_CALLBACK_IN: &str = "/run/pks/broker/callback.sock";
+/// Where the publish agent listens inside the sandbox (FR-PUB).
+pub const BROKER_PUBLISH_IN: &str = "/run/pks/broker/publish.sock";
 /// The IDE's OAuth callback listener inside the sandbox, and the host's port
 /// for the same callback (PRD FR-NET, Phase 12.2).
 pub const CALLBACK_TARGET: &str = "127.0.0.1:3128";
@@ -105,6 +107,8 @@ pub struct Plan {
     pub binds: Vec<crate::spec::Bind>,
     /// Host directory for the brokers, or `None` for no broker.
     pub broker_dir: Option<PathBuf>,
+    /// Whether published ports reach the host (PRD FR-PUB).
+    pub publish: bool,
     /// Host path of the mirror's Unix socket, or `None` for no mirror.
     pub mirror_socket: Option<PathBuf>,
     /// Host path of the supervisor socket for the monitor, or `None`.
@@ -341,6 +345,10 @@ pub fn bwrap_args(plan: &Plan) -> Vec<OsString> {
             ],
         );
     }
+    // The publish agent (FR-PUB): one socket for every published port.
+    if plan.publish && plan.broker_dir.is_some() {
+        push(&mut args, &["--publish-socket", BROKER_PUBLISH_IN]);
+    }
     if plan.supervisor_socket.is_some() {
         push(&mut args, &["--supervisor-socket", SUPERVISOR_SOCKET_IN]);
     }
@@ -391,6 +399,7 @@ mod tests {
             host_ports: Vec::new(),
             binds: Vec::new(),
             broker_dir: None,
+            publish: false,
             mirror_socket: None,
             supervisor_socket: None,
             shims: Vec::new(),

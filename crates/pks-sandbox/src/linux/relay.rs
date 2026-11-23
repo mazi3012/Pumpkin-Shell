@@ -125,6 +125,9 @@ pub(crate) fn pipe(tcp: TcpStream, unix: UnixStream) {
         let _ = unix_write.shutdown(Shutdown::Write);
     });
     let _ = io::copy(&mut unix_read, &mut tcp_write);
+    // The far end has closed. Tell the client, so it does not wait for a
+    // reply that will never come.
+    let _ = tcp_write.shutdown(Shutdown::Write);
     let _ = up.join();
 }
 

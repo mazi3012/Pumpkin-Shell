@@ -80,3 +80,24 @@ fn kiro_help_lists_the_no_dashboard_flag() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.contains("--no-dashboard"), "{stdout}");
 }
+
+#[test]
+fn kiro_help_lists_the_publish_flag() {
+    let out = run(&["kiro", "--help"]).unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("--publish"), "{stdout}");
+}
+
+#[test]
+fn a_reserved_port_cannot_be_published() {
+    // 8765 belongs to the dashboard. It must be refused before anything starts.
+    let out = Command::new(env!("CARGO_BIN_EXE_pumpkin-shell"))
+        .args(["kiro", ".", "--publish", "8765"])
+        .env_remove("CLICOLOR_FORCE")
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("cannot be shared"), "{stderr}");
+}
