@@ -212,6 +212,15 @@ The shared Rust core holds the proxy, mirror, detection engine, log, policy, bro
 - It loads no external script, style or font, and sends nothing off the machine. It refreshes by polling every 2 seconds.
 - The sandbox cannot reach the dashboard: it has no route to the host's loopback except the listed host ports.
 
+### FR-PUB: Publishing a port from the sandbox (added 2026-11-23, after 1.0.3)
+- A server the IDE or agent starts on `127.0.0.1` inside the sandbox is not reachable from the host by default. This is intended.
+- The host relay listens only on host `127.0.0.1`, never `0.0.0.0`, and forwards only to the approved port on sandbox `127.0.0.1`.
+- Two ways to share a port: `pumpkin-shell kiro <path> --publish <port>` (no prompt), or a prompt when the sandbox starts listening on a port, with the choices once, session, or deny. The prompt default is deny.
+- The monitor watches `bind` on the sandbox side (seccomp notify, like `connect`). If that watch is not available on the kernel, sharing is off unless `--publish` is given, and `doctor` reports it.
+- A share ends when the session ends. Each share, denial and close is written to the signed log (`layer = "pub"`).
+- The banner and the dashboard show the active shares.
+- Documented risk: any program on this computer can reach a shared port while it is open. A page served by the app runs in the host browser and can probe other `localhost` services. The README recommends a separate browser profile for shared apps.
+
 ### CLI
 `doctor`, `init`, `ide <kiro|code|cursor|windsurf> [path]`, `ide import <ide>` (settings + extensions, never tokens), `watch`, `allow`, `allow-write`, `resume`, `kill`, `review`, `restore`, `scan [--ci]`, `trust`, `policy check`, `policy suggest`, `log [verify]`, `test`.
 
