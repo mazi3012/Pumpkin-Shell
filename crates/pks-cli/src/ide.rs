@@ -5,7 +5,9 @@
 //! if the policy is invalid), starts the egress proxy on a session socket,
 //! records every decision in a signed log, and runs the IDE.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(target_os = "linux")]
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::ValueEnum;
@@ -1060,7 +1062,7 @@ mod tests {
 
 /// The sandbox is Linux-only until Phase 16.
 #[cfg(not(target_os = "linux"))]
-pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
+pub fn run(_ide: Ide, _repo: &Path, _publish: &[u16]) -> ExitCode {
     eprintln!("ide: the sandbox is Linux-only until Phase 16 (Windows).");
     ExitCode::from(EXIT_SETUP)
 }
@@ -1069,6 +1071,7 @@ pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
 /// seccomp, then runs `command`. Called by bubblewrap, not by users.
 /// The helper agents the sandbox starts before the IDE: the OAuth callback
 /// (Phase 12) and the port publisher (FR-PUB).
+#[cfg(target_os = "linux")]
 pub struct Agents {
     /// The OAuth callback socket and the IDE listener it passes to.
     pub callback: Option<(PathBuf, std::net::SocketAddr)>,
@@ -1154,15 +1157,7 @@ pub fn sandbox_callback(_socket: &Path, _target: std::net::SocketAddr) -> ExitCo
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn sandbox_init(
-    _rw: &[PathBuf],
-    _ro: &[PathBuf],
-    _proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
-    _mirror: Option<(std::net::SocketAddr, PathBuf)>,
-    _agents: Agents,
-    _supervisor: Option<PathBuf>,
-    _command: &[std::ffi::OsString],
-) -> ExitCode {
+pub fn sandbox_init() -> ExitCode {
     eprintln!("sandbox-init: Linux only");
     ExitCode::from(126)
 }

@@ -16,14 +16,14 @@ path = "src/main.rs"
 clap.workspace = true
 pks-core = { path = "../pks-core", version = "1.0.4" }
 pks-detect = { path = "../pks-detect", version = "1.0.4" }
-# The package mirror (Phase 14). Linux only, like the sandbox.
-pks-registry = { path = "../pks-registry", version = "1.0.4" }
 pks-scan = { path = "../pks-scan", version = "1.0.4" }
 serde.workspace = true
 serde_json.workspace = true
 
 # Linux-only probes (doctor). Windows gets its own probes in Phase 16.
 [target.'cfg(target_os = "linux")'.dependencies]
+# The package mirror (Phase 14). Linux only, like the sandbox.
+pks-registry = { path = "../pks-registry", version = "1.0.4" }
 # Sandbox (Phase 8); Windows gets its backend in Phase 16.
 pks-sandbox = { path = "../pks-sandbox", version = "1.0.4" }
 pks-proxy = { path = "../pks-proxy", version = "1.0.4" }

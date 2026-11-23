@@ -302,6 +302,7 @@ fn main() -> ExitCode {
             publish,
         }) => open_project(ide::Ide::Kiro, path, no_dashboard, publish),
         Some(Command::Dashboard { port }) => dashboard::run(port),
+        #[cfg(target_os = "linux")]
         Some(Command::SandboxInit {
             rw,
             ro,
@@ -329,6 +330,8 @@ fn main() -> ExitCode {
             supervisor_socket,
             &command,
         ),
+        #[cfg(not(target_os = "linux"))]
+        Some(Command::SandboxInit { .. }) => ide::sandbox_init(),
         Some(Command::SandboxCallback { socket, target }) => ide::sandbox_callback(&socket, target),
         Some(Command::SandboxPublish { socket }) => ide::sandbox_publish(&socket),
         Some(Command::SandboxRelay {
