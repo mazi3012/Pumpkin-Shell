@@ -1060,7 +1060,7 @@ mod tests {
 
 /// The sandbox is Linux-only until Phase 16.
 #[cfg(not(target_os = "linux"))]
-pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
+pub fn run(_ide: Ide, _repo: &Path, _publish: &[u16]) -> ExitCode {
     eprintln!("ide: the sandbox is Linux-only until Phase 16 (Windows).");
     ExitCode::from(EXIT_SETUP)
 }
