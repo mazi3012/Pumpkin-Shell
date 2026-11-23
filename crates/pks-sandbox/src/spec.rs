@@ -81,6 +81,8 @@ pub struct LaunchSpec {
     /// `None` runs the IDE with no broker: `xdg-open` and `git` are the
     /// system programs, and nothing can reach the host.
     pub broker_dir: Option<PathBuf>,
+    /// Whether ports the user publishes reach the host (PRD FR-PUB).
+    pub publish: bool,
     /// Where the backend writes the nested display's number and access file
     /// while the IDE runs (`DISPLAY=` and `XAUTHORITY=` lines), so the host
     /// can read and set the sandbox clipboard. Removed when the IDE exits.
@@ -332,6 +334,7 @@ mod tests {
                 binds: Vec::new(),
                 pid_file: None,
                 broker_dir: None,
+                publish: false,
                 display_file: None,
                 mirror_socket: None,
                 supervisor_socket: None,

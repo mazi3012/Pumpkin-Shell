@@ -77,6 +77,9 @@ Leave out the folder to choose it in a window (needs zenity).")]
         /// Do not start the local dashboard.
         #[arg(long)]
         no_dashboard: bool,
+        /// Share a sandbox port with this computer, for example 3000. Repeatable.
+        #[arg(long = "publish", value_name = "PORT")]
+        publish: Vec<u16>,
     },
     /// Open a repository in an IDE that runs inside the sandbox.
     Ide {
@@ -88,6 +91,9 @@ Leave out the folder to choose it in a window (needs zenity).")]
         /// Do not start the local dashboard.
         #[arg(long)]
         no_dashboard: bool,
+        /// Share a sandbox port with this computer, for example 3000. Repeatable.
+        #[arg(long = "publish", value_name = "PORT")]
+        publish: Vec<u16>,
     },
     /// Internal: the step inside the sandbox that applies Landlock and seccomp, then runs the IDE.
     #[command(hide = true)]
@@ -110,6 +116,9 @@ Leave out the folder to choose it in a window (needs zenity).")]
         /// The IDE's listener inside the sandbox for the callback. Needs --callback-socket.
         #[arg(long = "callback-target", requires = "callback_socket")]
         callback_target: Option<std::net::SocketAddr>,
+        /// Socket the publish agent creates in the broker directory (FR-PUB).
+        #[arg(long = "publish-socket")]
+        publish_socket: Option<PathBuf>,
         /// Loopback address the in-sandbox relay listens on (Phase 9).
         #[arg(long = "relay-listen", requires = "relay_socket")]
         relay_listen: Option<std::net::SocketAddr>,
@@ -125,6 +134,13 @@ Leave out the folder to choose it in a window (needs zenity).")]
         /// The program to run after the restrictions are applied.
         #[arg(last = true, required = true, num_args = 1..)]
         command: Vec<OsString>,
+    },
+    /// Internal: the in-sandbox publish agent (FR-PUB).
+    #[command(hide = true)]
+    SandboxPublish {
+        /// Unix socket to create in the broker directory.
+        #[arg(long)]
+        socket: PathBuf,
     },
     /// Internal: passes connections from a Unix socket to the IDE's loopback listener.
     #[command(hide = true)]
@@ -278,10 +294,13 @@ fn main() -> ExitCode {
             ide,
             path,
             no_dashboard,
-        }) => open_project(ide, path, no_dashboard),
-        Some(Command::Kiro { path, no_dashboard }) => {
-            open_project(ide::Ide::Kiro, path, no_dashboard)
-        }
+            publish,
+        }) => open_project(ide, path, no_dashboard, publish),
+        Some(Command::Kiro {
+            path,
+            no_dashboard,
+            publish,
+        }) => open_project(ide::Ide::Kiro, path, no_dashboard, publish),
         Some(Command::Dashboard { port }) => dashboard::run(port),
         Some(Command::SandboxInit {
             rw,
@@ -293,6 +312,7 @@ fn main() -> ExitCode {
             mirror_socket,
             callback_socket,
             callback_target,
+            publish_socket,
             supervisor_socket,
             command,
         }) => ide::sandbox_init(
@@ -302,11 +322,15 @@ fn main() -> ExitCode {
                 .zip(relay_socket)
                 .map(|(listen, socket)| (listen, socket, relay_host_ports)),
             mirror_listen.zip(mirror_socket),
-            callback_socket.zip(callback_target),
+            ide::Agents {
+                callback: callback_socket.zip(callback_target),
+                publish: publish_socket,
+            },
             supervisor_socket,
             &command,
         ),
         Some(Command::SandboxCallback { socket, target }) => ide::sandbox_callback(&socket, target),
+        Some(Command::SandboxPublish { socket }) => ide::sandbox_publish(&socket),
         Some(Command::SandboxRelay {
             listen,
             socket,
@@ -338,7 +362,12 @@ fn main() -> ExitCode {
 /// Opens the project in an IDE. Without a folder, a window asks for one. The
 /// command to type next time is printed first. The dashboard starts on its
 /// port, and the banner shows where it is.
-fn open_project(ide: ide::Ide, path: Option<PathBuf>, no_dashboard: bool) -> ExitCode {
+fn open_project(
+    ide: ide::Ide,
+    path: Option<PathBuf>,
+    no_dashboard: bool,
+    publish: Vec<u16>,
+) -> ExitCode {
     let (usage, name) = match ide {
         ide::Ide::Kiro => ("pumpkin-shell kiro /yourfolderhere", "Kiro"),
         ide::Ide::Code => ("pumpkin-shell ide code /yourfolderhere", "VS Code"),
@@ -376,7 +405,7 @@ fn open_project(ide: ide::Ide, path: Option<PathBuf>, no_dashboard: bool) -> Exi
             },
         }
     };
-    let rows = [
+    let mut rows = vec![
         banner::Row {
             mark: "●",
             label: "IDE",
@@ -394,8 +423,19 @@ fn open_project(ide: ide::Ide, path: Option<PathBuf>, no_dashboard: bool) -> Exi
         },
         dashboard,
     ];
+    if !publish.is_empty() {
+        let shared: Vec<String> = publish
+            .iter()
+            .map(|port| format!("127.0.0.1:{port} -> sandbox"))
+            .collect();
+        rows.push(banner::Row {
+            mark: "●",
+            label: "Shared",
+            value: shared.join(", "),
+        });
+    }
     banner::show(env!("CARGO_PKG_VERSION"), &rows);
-    ide::run(ide, &path)
+    ide::run(ide, &path, &publish)
 }
 
 #[cfg(test)]

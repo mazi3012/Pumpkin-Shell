@@ -8,7 +8,7 @@ AI in the IDE can read and change the project, but it cannot reach your SSH
 keys, cloud logins, host files outside the project, or the internet except
 through a checked proxy.
 
-Version 1.0.3 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
+Version 1.0.4 supports **Linux** and **Kiro**. Windows, VS Code, Cursor and
 Windsurf come after the first release.
 
 License: MIT (see [LICENSE](LICENSE)).
@@ -192,6 +192,23 @@ The release notes and the escape corpus are in
 
 ## Use it
 
+### Open a server from the sandbox in your browser
+
+A server the agent starts inside the sandbox is not reachable from your browser
+by default. To share a port, give it with `--publish`:
+
+```sh
+pumpkin-shell kiro /yourfolderhere --publish 3000
+```
+
+Then open `http://127.0.0.1:3000/`. Only that port is shared, and only with this
+computer (127.0.0.1). The share ends when Kiro closes. The banner lists the
+shared ports. Ports 3128 and 8765 are used by Pumpkin-Shell and cannot be shared.
+
+Any program on this computer can reach a shared port while it is open. A page
+the app serves runs in your browser, so open shared apps in a separate browser
+profile.
+
 Open a project in the sandboxed Kiro:
 
 ```sh
@@ -349,7 +366,7 @@ flowchart LR
 | 5 to 12 | Linux sandbox, policy and log, proxy, workspace integrity, alerts and review, brokers | done |
 | 14 | npm and PyPI mirror, seven clients tested through it | done |
 | 15 | Exec and connect monitor | done |
-| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.3) |
+| 18 | v1.0 release: corpus, signed packages, threat model | done (v1.0.0, patch 1.0.4) |
 | 19 | Live local dashboard (Pumpkin-Shell Watch) | done |
 | 6, 13, 16, 17 | Windows and other IDEs | after the first release |
 

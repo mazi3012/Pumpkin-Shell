@@ -48,7 +48,7 @@ fn create_private_dir(dir: &Path) -> std::io::Result<()> {
 /// Runs the IDE on `repo`. Returns the IDE's exit code, or 2 when the session
 /// could not start (the IDE is not started in that case).
 #[cfg(target_os = "linux")]
-pub fn run(ide: Ide, repo: &Path) -> ExitCode {
+pub fn run(ide: Ide, repo: &Path, publish: &[u16]) -> ExitCode {
     use pks_core::paths::{self, process_env};
     use pks_sandbox::linux::LinuxBackend;
     use pks_sandbox::{LaunchSpec, Roots, SandboxBackend};
@@ -79,6 +79,15 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         Err(error) => return setup(format!("cannot resolve {}: {error}", repo.display())),
     };
     let repo = repo.as_path();
+    // Published ports (FR-PUB). Port 0 is not a port; 3128 and the dashboard port are in use.
+    for &port in publish {
+        if port == 0 || port == 3128 || port == crate::dashboard::DEFAULT_PORT {
+            return setup(format!(
+                "port {port} cannot be shared (0, 3128 and {} are used by Pumpkin-Shell)",
+                crate::dashboard::DEFAULT_PORT
+            ));
+        }
+    }
     let policy = match pks_core::policy::read_user_policy(&config) {
         Ok(found) => found.unwrap_or_else(pks_core::policy::empty_user_policy),
         Err(error) => return setup(format!("your policy is not valid: {error}")),
@@ -97,6 +106,23 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         Err(message) => return setup(message),
     };
 
+    // Published ports (FR-PUB): each host port is passed to the in-sandbox agent.
+    for &port in publish {
+        let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(listener) => listener,
+            Err(error) => {
+                return setup(format!(
+                    "cannot share port {port}: 127.0.0.1:{port} is not free ({error})"
+                ));
+            }
+        };
+        let agent_socket = session.dir.join("broker").join(PUBLISH_SOCKET);
+        let stop = std::sync::Arc::clone(&session.broker_stop);
+        std::thread::spawn(move || {
+            let _ = pks_sandbox::linux::broker::publish_host(listener, agent_socket, port, stop);
+        });
+        publish_record(&session, &effective.hash(), port, "allow");
+    }
     let spec_install = install(ide);
     let ide_home = data.join("ide-home").join(spec_install.name);
     if let Err(error) = create_private_dir(&ide_home) {
@@ -135,6 +161,7 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
         display_file: Some(session.dir.join(crate::clipboard::DISPLAY_FILE)),
         mirror_socket: Some(session.dir.join("mirror.sock")),
         supervisor_socket: Some(session.dir.join(SUPERVISOR_SOCKET)),
+        publish: !publish.is_empty(),
     };
     let init_exe = match std::env::current_exe() {
         Ok(path) => path,
@@ -262,6 +289,9 @@ pub fn run(ide: Ide, repo: &Path) -> ExitCode {
     let _ = watch_thread.join();
     let _ = poll_thread.join();
     session.check_workspace(repo);
+    for &port in publish {
+        publish_record(&session, &effective.hash(), port, "close");
+    }
     session.close();
     match result {
         Ok(status) => match status.code() {
@@ -303,6 +333,31 @@ struct Session {
     notifier: std::sync::Arc<pks_detect::Notifier>,
     /// Stops the broker request listener and the callback listener.
     broker_stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// The socket name the publish agent uses in the broker directory (FR-PUB).
+#[cfg(target_os = "linux")]
+const PUBLISH_SOCKET: &str = "publish.sock";
+
+/// Writes one publish event to the session log: `allow` when a port is shared,
+/// `close` when the session ends (FR-PUB).
+#[cfg(target_os = "linux")]
+fn publish_record(session: &Session, policy_hash: &str, port: u16, verdict: &str) {
+    let target = format!("127.0.0.1:{port}");
+    if let Ok(mut guard) = session.log.lock()
+        && let Some(logger) = guard.as_mut()
+    {
+        let _ = logger.append(
+            &Record {
+                policy_hash,
+                layer: "pub",
+                target: &target,
+                rule: "PUB-SHARE",
+                verdict,
+            },
+            now_ms(),
+        );
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1012,13 +1067,40 @@ pub fn run(_ide: Ide, _repo: &Path) -> ExitCode {
 
 /// The in-sandbox step: applies Landlock, starts the relay if given, applies
 /// seccomp, then runs `command`. Called by bubblewrap, not by users.
+/// The helper agents the sandbox starts before the IDE: the OAuth callback
+/// (Phase 12) and the port publisher (FR-PUB).
+pub struct Agents {
+    /// The OAuth callback socket and the IDE listener it passes to.
+    pub callback: Option<(PathBuf, std::net::SocketAddr)>,
+    /// The publish agent's socket in the broker directory.
+    pub publish: Option<PathBuf>,
+}
+
+/// The in-sandbox publish agent (FR-PUB), started by the host.
+#[cfg(target_os = "linux")]
+pub fn sandbox_publish(socket: &Path) -> ExitCode {
+    match pks_sandbox::linux::broker::sandbox_publish(socket) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("sandbox-publish: {error}");
+            ExitCode::from(1)
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn sandbox_publish(_socket: &Path) -> ExitCode {
+    eprintln!("sandbox-publish: Linux only");
+    ExitCode::from(1)
+}
+
 #[cfg(target_os = "linux")]
 pub fn sandbox_init(
     rw: &[PathBuf],
     ro: &[PathBuf],
     proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
     mirror: Option<(std::net::SocketAddr, PathBuf)>,
-    callback: Option<(PathBuf, std::net::SocketAddr)>,
+    agents: Agents,
     supervisor: Option<PathBuf>,
     command: &[std::ffi::OsString],
 ) -> ExitCode {
@@ -1037,14 +1119,16 @@ pub fn sandbox_init(
             host_ports: Vec::new(),
         });
     }
-    let callback =
-        callback.map(|(socket, target)| pks_sandbox::linux::init::Callback { socket, target });
+    let callback = agents
+        .callback
+        .map(|(socket, target)| pks_sandbox::linux::init::Callback { socket, target });
     let error = pks_sandbox::linux::init::run(
         rw,
         ro,
         command,
         &relays,
         callback.as_ref(),
+        agents.publish.as_deref(),
         supervisor.as_deref(),
     );
     eprintln!("sandbox-init: {error}");
@@ -1075,7 +1159,7 @@ pub fn sandbox_init(
     _ro: &[PathBuf],
     _proxy: Option<(std::net::SocketAddr, PathBuf, Vec<u16>)>,
     _mirror: Option<(std::net::SocketAddr, PathBuf)>,
-    _callback: Option<(PathBuf, std::net::SocketAddr)>,
+    _agents: Agents,
     _supervisor: Option<PathBuf>,
     _command: &[std::ffi::OsString],
 ) -> ExitCode {

@@ -294,10 +294,184 @@ pub fn sandbox_callback(
     Ok(())
 }
 
+/// Host side of port publishing (PRD FR-PUB). Each connection to the host
+/// port is passed to the in-sandbox agent, with the port as its first line.
+///
+/// # Errors
+/// Fails when the listener stops accepting.
+pub fn publish_host(
+    listener: std::net::TcpListener,
+    agent_socket: std::path::PathBuf,
+    port: u16,
+    stop: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    listener.set_nonblocking(true)?;
+    while !stop.load(Ordering::Relaxed) {
+        match listener.accept() {
+            Ok((tcp, _)) => {
+                let _ = tcp.set_nonblocking(false);
+                // The agent is not up, or refuses: the browser sees the close.
+                if let Ok(mut unix) = UnixStream::connect(&agent_socket)
+                    && unix.write_all(format!("{port}\n").as_bytes()).is_ok()
+                {
+                    std::thread::spawn(move || crate::linux::relay::pipe(tcp, unix));
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+/// The in-sandbox side of port publishing (PRD FR-PUB). Listens on `socket`.
+/// For each connection it reads the port from the first line, then passes the
+/// connection to that port on the sandbox's own loopback. Only the host writes
+/// to this socket, and the host writes only ports the user published.
+///
+/// # Errors
+/// Fails when the socket cannot be created.
+pub fn sandbox_publish(socket: &std::path::Path) -> std::io::Result<()> {
+    let _ = std::fs::remove_file(socket);
+    let listener = UnixListener::bind(socket)?;
+    for stream in listener.incoming() {
+        let Ok(mut unix) = stream else { continue };
+        std::thread::spawn(move || {
+            let _ = unix.set_read_timeout(Some(Duration::from_secs(5)));
+            let Some(port) = read_port(&mut unix) else {
+                return;
+            };
+            let _ = unix.set_read_timeout(None);
+            // Nothing listening on the port: the host sees the close.
+            if let Ok(tcp) = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)) {
+                crate::linux::relay::pipe(tcp, unix);
+            }
+        });
+    }
+    Ok(())
+}
+/// Reads the port written as the first line: decimal digits, then a newline.
+/// `None` for anything else, including port 0 and text too long for a port.
+#[must_use]
+pub fn read_port(stream: &mut UnixStream) -> Option<u16> {
+    let mut line = Vec::with_capacity(6);
+    let mut byte = [0u8; 1];
+    loop {
+        if stream.read(&mut byte).ok()? == 0 {
+            return None;
+        }
+        if byte[0] == b'\n' {
+            break;
+        }
+        if line.len() >= 5 {
+            return None;
+        }
+        line.push(byte[0]);
+    }
+    let port: u16 = std::str::from_utf8(&line).ok()?.parse().ok()?;
+    (port != 0).then_some(port)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn read_port_accepts_a_port_and_refuses_anything_else() {
+        for (text, expected) in [
+            ("3000\n", Some(3000)),
+            ("0\n", None),
+            ("70000\n", None),
+            ("abc\n", None),
+            ("3000", None),
+        ] {
+            let (mut sender, mut receiver) = UnixStream::pair().expect("a socket pair");
+            sender.write_all(text.as_bytes()).expect("write");
+            drop(sender);
+            assert_eq!(read_port(&mut receiver), expected, "{text:?}");
+        }
+    }
+
+    /// A TCP server on loopback that echoes what it reads.
+    fn echo_server() -> std::io::Result<u16> {
+        let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let port = listener.local_addr()?.port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                std::thread::spawn(move || {
+                    let mut stream = stream;
+                    let mut buffer = [0u8; 64];
+                    while let Ok(n) = stream.read(&mut buffer) {
+                        if n == 0 || stream.write_all(&buffer[..n]).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        Ok(port)
+    }
+
+    #[test]
+    fn a_published_port_reaches_the_sandbox_server_and_back() -> std::io::Result<()> {
+        let app_port = echo_server()?;
+        let dir = tempfile::tempdir()?;
+        let socket = dir.path().join("publish.sock");
+        let agent_socket = socket.clone();
+        std::thread::spawn(move || {
+            let _ = sandbox_publish(&agent_socket);
+        });
+        while !socket.exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let host = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let host_port = host.local_addr()?.port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let _ = publish_host(host, socket, app_port, flag);
+        });
+        let mut browser = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, host_port))?;
+        browser.set_read_timeout(Some(Duration::from_secs(5)))?;
+        browser.write_all(b"hello")?;
+        let mut reply = [0u8; 5];
+        browser.read_exact(&mut reply)?;
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(&reply, b"hello");
+        Ok(())
+    }
+
+    #[test]
+    fn a_published_port_with_nothing_listening_closes_instead_of_hanging() -> std::io::Result<()> {
+        // Bind and drop a listener to get a port that is free now.
+        let closed = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?
+            .local_addr()?
+            .port();
+        let dir = tempfile::tempdir()?;
+        let socket = dir.path().join("publish.sock");
+        let agent_socket = socket.clone();
+        std::thread::spawn(move || {
+            let _ = sandbox_publish(&agent_socket);
+        });
+        while !socket.exists() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let host = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))?;
+        let host_port = host.local_addr()?.port();
+        let stop = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&stop);
+        std::thread::spawn(move || {
+            let _ = publish_host(host, socket, closed, flag);
+        });
+        let mut browser = std::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, host_port))?;
+        browser.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let mut buffer = [0u8; 8];
+        let read = browser.read(&mut buffer)?;
+        stop.store(true, Ordering::Relaxed);
+        assert_eq!(read, 0, "the browser sees the connection close");
+        Ok(())
+    }
 
     /// Records what the host was asked to do.
     struct Fake {

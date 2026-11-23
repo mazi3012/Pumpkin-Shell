@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.0.4 - 2026-11-23
+
+### Added
+- `--publish <PORT>` on `kiro` and `ide` (repeatable). A server the agent starts
+  inside the sandbox on that port is reached at `http://127.0.0.1:<PORT>/` on
+  this computer. Only the given port is shared, only on 127.0.0.1, and the share
+  ends with the session. Each share and close is written to the signed log
+  (`layer = "pub"`, rule `PUB-SHARE`). Ports 0, 3128 and 8765 are refused.
+
+### Fixed
+- When the far end of a relay closes, the client now sees the close at once. Before,
+  a browser waited until its own timeout.
+
 ## 1.0.3 - 2026-11-23
 
 ### Added

@@ -29,7 +29,7 @@ Ordered roadmap for building v1.0. Work one phase at a time, in number order. A 
 | 17 | Windows parity | T15 | Windows | | deferred: after first release |
 | 18 | v1.0 release (first release: Linux, Kiro) | T16 | Linux | **v1.0** | in-progress (branch `phase-18-release`) |
 | 19 | Local dashboard (after first release) | FR-DASH | Linux | | done (Pumpkin-Shell Watch; tests and screenshot 2026-11-22) |
-| 20 | Publish a sandbox port to the host (after 1.0.3) | FR-PUB | Linux | | todo: plan only, not built |
+| 20 | Publish a sandbox port to the host (after 1.0.3) | FR-PUB | Linux | | in-progress: `--publish` built (1.0.4); prompt on bind (20.1, 20.3) and doctor check (20.6) not built |
 
 **First-release scope (set 2026-11-21, see DECISIONS.md):** Linux and Kiro only. Phases 6, 13, 16 and 17 are deferred until after the first release. Phase 6 keeps its number, and it is out of order on purpose. The PRD runs the Windows proof of concept early, so the design can change before anything depends on it. Nothing in the first release waits on Phase 6.
 
@@ -432,7 +432,9 @@ Extra, not in the original list: clipboard copy out and paste in, each after a d
 
 **Goal:** a server the agent starts inside the sandbox can be opened in the host browser, safely. PRD FR-PUB.
 
-**Blocked by:** user approval of this plan (2026-11-23).
+**Blocked by:** none. Approved 2026-11-23.
+
+**Status (1.0.4):** 20.2, 20.4 and the log and banner parts of 20.5 are built and tested, including a real sandbox test (a server inside the sandbox answers a host connection through the published port). Not built: 20.1 and 20.3 (prompt when the sandbox binds a port; needs `bind` in seccomp notify), 20.5 dashboard list of shares, and 20.6 doctor check.
 
 20.1. Seccomp notify for `bind` on the sandbox side, reporting the port and address. Test: a bind inside the sandbox is seen on the host.
 20.2. `--publish <port>` on `kiro` and `ide`. The host relay listens on host `127.0.0.1:<port>` only, and forwards to sandbox `127.0.0.1:<port>` through the existing relay socket. Test: a request to the host port reaches a server in the sandbox; a request to any other port is refused.

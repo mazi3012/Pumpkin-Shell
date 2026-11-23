@@ -142,6 +142,7 @@ impl SandboxBackend for LinuxBackend {
             proxy_socket: spec.proxy_socket.clone(),
             host_ports: spec.host_ports.clone(),
             broker_dir: spec.broker_dir.clone(),
+            publish: spec.publish,
             mirror_socket: spec.mirror_socket.clone(),
             supervisor_socket: spec.supervisor_socket.clone(),
             shims: installed_shims(),
