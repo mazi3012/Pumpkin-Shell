@@ -88,6 +88,8 @@ fn kiro_help_lists_the_publish_flag() {
     assert!(stdout.contains("--publish"), "{stdout}");
 }
 
+// The check runs in the Linux launch path. Windows stops earlier, with its own message.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_reserved_port_cannot_be_published() {
     // 8765 belongs to the dashboard. It must be refused before anything starts.
