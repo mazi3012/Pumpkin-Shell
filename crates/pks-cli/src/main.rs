@@ -2,6 +2,7 @@
 
 #[cfg(target_os = "linux")]
 mod ask;
+mod banner;
 #[cfg(target_os = "linux")]
 mod broker;
 #[cfg(target_os = "linux")]
@@ -73,6 +74,9 @@ Leave out the folder to choose it in a window (needs zenity).")]
     Kiro {
         /// Repository to open. Leave out to choose it in a window.
         path: Option<PathBuf>,
+        /// Do not start the local dashboard.
+        #[arg(long)]
+        no_dashboard: bool,
     },
     /// Open a repository in an IDE that runs inside the sandbox.
     Ide {
@@ -81,6 +85,9 @@ Leave out the folder to choose it in a window (needs zenity).")]
         ide: ide::Ide,
         /// Repository to open. Leave out to choose it in a window.
         path: Option<PathBuf>,
+        /// Do not start the local dashboard.
+        #[arg(long)]
+        no_dashboard: bool,
     },
     /// Internal: the step inside the sandbox that applies Landlock and seccomp, then runs the IDE.
     #[command(hide = true)]
@@ -267,8 +274,14 @@ fn main() -> ExitCode {
             fail_on,
             no_ignore,
         }) => scan::run(&path, json, ci, fail_on.into(), no_ignore),
-        Some(Command::Ide { ide, path }) => open_project(ide, path),
-        Some(Command::Kiro { path }) => open_project(ide::Ide::Kiro, path),
+        Some(Command::Ide {
+            ide,
+            path,
+            no_dashboard,
+        }) => open_project(ide, path, no_dashboard),
+        Some(Command::Kiro { path, no_dashboard }) => {
+            open_project(ide::Ide::Kiro, path, no_dashboard)
+        }
         Some(Command::Dashboard { port }) => dashboard::run(port),
         Some(Command::SandboxInit {
             rw,
@@ -323,23 +336,66 @@ fn main() -> ExitCode {
 }
 
 /// Opens the project in an IDE. Without a folder, a window asks for one. The
-/// command to type next time is printed first.
-fn open_project(ide: ide::Ide, path: Option<PathBuf>) -> ExitCode {
-    if let Some(path) = path {
-        return ide::run(ide, &path);
-    }
-    let usage = match ide {
-        ide::Ide::Kiro => "pumpkin-shell kiro /yourfolderhere",
-        ide::Ide::Code => "pumpkin-shell ide code /yourfolderhere",
+/// command to type next time is printed first. The dashboard starts on its
+/// port, and the banner shows where it is.
+fn open_project(ide: ide::Ide, path: Option<PathBuf>, no_dashboard: bool) -> ExitCode {
+    let (usage, name) = match ide {
+        ide::Ide::Kiro => ("pumpkin-shell kiro /yourfolderhere", "Kiro"),
+        ide::Ide::Code => ("pumpkin-shell ide code /yourfolderhere", "VS Code"),
     };
-    eprintln!("Opening a folder window. To skip it next time, run:\n  {usage}");
-    match picker::choose_folder(usage) {
-        Ok(path) => ide::run(ide, &path),
-        Err(message) => {
-            eprintln!("{message}");
-            ExitCode::from(2)
+    let path = match path {
+        Some(path) => path,
+        None => {
+            eprintln!("Opening a folder window. To skip it next time, run:\n  {usage}");
+            match picker::choose_folder(usage) {
+                Ok(path) => path,
+                Err(message) => {
+                    eprintln!("{message}");
+                    return ExitCode::from(2);
+                }
+            }
         }
-    }
+    };
+    let dashboard = if no_dashboard {
+        banner::Row {
+            mark: "○",
+            label: "Dashboard",
+            value: "off (--no-dashboard)".to_owned(),
+        }
+    } else {
+        match dashboard::start_in_background(dashboard::DEFAULT_PORT) {
+            Ok(port) => banner::Row {
+                mark: "●",
+                label: "Dashboard",
+                value: format!("http://127.0.0.1:{port}/"),
+            },
+            Err(message) => banner::Row {
+                mark: "!",
+                label: "Dashboard",
+                value: format!("{message}. Use pumpkin-shell dashboard --port 9000"),
+            },
+        }
+    };
+    let rows = [
+        banner::Row {
+            mark: "●",
+            label: "IDE",
+            value: name.to_owned(),
+        },
+        banner::Row {
+            mark: "●",
+            label: "Project",
+            value: path.display().to_string(),
+        },
+        banner::Row {
+            mark: "●",
+            label: "Sandbox",
+            value: "on (bubblewrap, Landlock, seccomp)".to_owned(),
+        },
+        dashboard,
+    ];
+    banner::show(env!("CARGO_PKG_VERSION"), &rows);
+    ide::run(ide, &path)
 }
 
 #[cfg(test)]

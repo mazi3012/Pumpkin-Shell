@@ -41,6 +41,7 @@ install -Dm0644 packaging/apparmor/usr.bin.pumpkin-shell %{buildroot}%{_datadir}
 %changelog
 * Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.3-1
 - Choose the project folder in a window when no folder is given (needs zenity).
+- Print an orange start banner and start the dashboard with kiro and ide.
 * Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.2-1
 - Allow Kiro's own endpoints by default, so sign-in works without a policy file.
 * Mon Nov 23 2026 Md Mazidur Rahman <mazidurrahman30122000@gmail.com> - 1.0.1-1

@@ -53,7 +53,7 @@ fn kiro_is_a_one_word_shortcut_that_takes_a_path() {
     assert!(out.status.success());
     let stdout = String::from_utf8(out.stdout).unwrap();
     // The program is pumpkin-shell.exe on Windows, so check the part that is the same.
-    assert!(stdout.contains("kiro [PATH]"), "{stdout}");
+    assert!(stdout.contains("kiro [OPTIONS] [PATH]"), "{stdout}");
 }
 
 #[test]
@@ -72,4 +72,11 @@ fn kiro_without_a_folder_and_without_zenity_names_the_command_to_run() {
         stderr.contains("pumpkin-shell kiro /yourfolderhere"),
         "{stderr}"
     );
+}
+
+#[test]
+fn kiro_help_lists_the_no_dashboard_flag() {
+    let out = run(&["kiro", "--help"]).unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(stdout.contains("--no-dashboard"), "{stdout}");
 }

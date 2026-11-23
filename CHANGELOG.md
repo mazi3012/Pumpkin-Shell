@@ -7,6 +7,12 @@
   window to choose one. The command to type next time is printed first. If
   zenity is not installed, the command prints the usage line and exits with 2.
 
+- A start banner in orange when `kiro` or `ide` starts in a terminal. It lists
+  the IDE, the project, the sandbox and the dashboard link. It is not printed into
+  pipes, and it has no color when NO_COLOR is set.
+- `kiro` and `ide` start the dashboard in the background and print its link.
+  `--no-dashboard` turns this off. If the port is busy, the banner says so.
+
 ### Changed
 - The folder argument is optional. It no longer defaults to the current folder,
   so `pumpkin-shell kiro` with no argument opens the window. Use

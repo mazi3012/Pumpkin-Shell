@@ -230,6 +230,12 @@ Where things live:
 
 ## Live dashboard
 
+`pumpkin-shell kiro` and `pumpkin-shell ide` start the dashboard on
+http://127.0.0.1:8765/ while the IDE is open. The start banner shows the link.
+Use `--no-dashboard` to skip it.
+
+To open the dashboard without an IDE:
+
 ```sh
 pumpkin-shell dashboard          # then open http://127.0.0.1:8765/
 ```
